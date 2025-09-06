@@ -124,3 +124,91 @@ class Vec3[T]:
 
     def magnitude(self) -> float:
         return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
+
+
+@dataclass
+class Quaternion:
+    w: float = 1.0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+    @staticmethod
+    def from_axis_angle(axis: Vec3[float], angle: float) -> 'Quaternion':
+        """Cria um quaternion a partir de um eixo e um ângulo."""
+        axis = axis.normalize()
+        half_angle = angle / 2.0
+        sin_half = math.sin(half_angle)
+        return Quaternion(
+            w=math.cos(half_angle),
+            x=axis.x * sin_half,
+            y=axis.y * sin_half,
+            z=axis.z * sin_half
+        )
+
+    def __mul__(self, other: 'Quaternion') -> 'Quaternion':
+        """Multiplicação de quaternions para combinar rotações."""
+        w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z
+        x = self.w * other.x + self.x * other.w + self.y * other.z - self.z * other.y
+        y = self.w * other.y - self.x * other.z + self.y * other.w + self.z * other.x
+        z = self.w * other.z + self.x * other.y - self.y * other.x + self.z * other.w
+        return Quaternion(w, x, y, z)
+
+    def conjugate(self) -> 'Quaternion':
+        """Retorna o conjugado do quaternion."""
+        return Quaternion(self.w, -self.x, -self.y, -self.z)
+
+    def rotate_vector(self, v: Vec3[float]) -> Vec3[float]:
+        """Rotaciona um vetor usando o quaternion."""
+        q_v = Quaternion(0, v.x, v.y, v.z)
+        q_rotated = self * q_v * self.conjugate()
+        return Vec3(q_rotated.x, q_rotated.y, q_rotated.z)
+
+    def magnitude(self) -> float:
+        """Calcula a magnitude do quaternion."""
+        return math.sqrt(self.w**2 + self.x**2 + self.y**2 + self.z**2)
+
+    def normalize(self) -> 'Quaternion':
+        """Normaliza o quaternion para ter magnitude 1."""
+        mag = self.magnitude()
+        if mag == 0:
+            return Quaternion()  # Retorna quaternion de identidade
+        return Quaternion(self.w / mag, self.x / mag, self.y / mag, self.z / mag)
+
+    def to_euler_angles(self) -> Vec3[float]:
+        """Converte o quaternion para ângulos de Euler (roll, pitch, yaw)."""
+        # Roll (rotação no eixo x)
+        sinr_cosp = 2 * (self.w * self.x + self.y * self.z)
+        cosr_cosp = 1 - 2 * (self.x * self.x + self.y * self.y)
+        roll = math.atan2(sinr_cosp, cosr_cosp)
+
+        # Pitch (rotação no eixo y)
+        sinp = 2 * (self.w * self.y - self.z * self.x)
+        if abs(sinp) >= 1:
+            pitch = math.copysign(math.pi / 2, sinp)
+        else:
+            pitch = math.asin(sinp)
+
+        # Yaw (rotação no eixo z)
+        siny_cosp = 2 * (self.w * self.z + self.x * self.y)
+        cosy_cosp = 1 - 2 * (self.y * self.y + self.z * self.z)
+        yaw = math.atan2(siny_cosp, cosy_cosp)
+
+        return Vec3(roll, pitch, yaw)
+
+
+@dataclass
+class Ray:
+    origin: Vec3[float]
+    direction: Vec3[float]
+
+    def point_at(self, t: float) -> Vec3[float]:
+        return self.origin + self.direction * t
+
+
+@dataclass
+class HitInfo:
+    point: Vec3[float]
+    normal: Vec3[float]
+    distance: float
+    hit: bool

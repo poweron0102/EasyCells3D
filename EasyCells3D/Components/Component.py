@@ -1,9 +1,8 @@
 import traceback
-from typing import Type, Tuple
-import math
 from typing import TYPE_CHECKING
+from typing import Type
 
-from ..Geometry import Vec2
+from ..Geometry import Vec3, Quaternion
 from ..NewGame import NewGame
 
 if TYPE_CHECKING:
@@ -12,7 +11,7 @@ if TYPE_CHECKING:
 
 class Item:
     """
-    Class that represents an item that can have components and children.
+    Classe que representa um item que pode ter componentes e filhos.
     """
     transform: 'Transform'
     parent: 'Item | None'
@@ -99,8 +98,6 @@ class Component:
     item: Item
     enable: bool = True
 
-    # debug: bool = False  # Debug mode
-
     @property
     def transform(self) -> 'Transform':
         return self.item.transform
@@ -117,11 +114,9 @@ class Component:
         self.item = item
         self.game.to_init.append(self.init)
 
-    # abstract method
     def init(self):
         pass
 
-    # abstract method
     def loop(self):
         pass
 
@@ -133,14 +128,7 @@ class Component:
             cls = cls.__bases__[0]
             self.item.components.pop(cls)
 
-    # abstract method
     def on_destroy(self):
-        """
-        This can be called multiple times if the Component has multiple Inheritances.
-        you can use:
-        self.on_destroy = lambda: None
-        to avoid this
-        """
         pass
 
     def GetComponent[T: Component](self, component: Type[T]) -> T | None:
@@ -167,104 +155,60 @@ class Component:
 
 class Transform:
     """
-    Class that represents a transform with position, rotation and scale.
+    Classe que representa uma transformação 3D com posição, rotação (como um Quaternion) e escala.
     """
     Global: 'Transform'
 
-    x: float
-    y: float
-    z: float
+    position: Vec3[float]
+    rotation: Quaternion
+    scale: Vec3[float]
 
-    _scale: float
-
-    @property
-    def scale(self):
-        return self._scale
-
-    @scale.setter
-    def scale(self, value):
-        self._scale = value if value > 0.0001 else 0.0001
-
-    _angle: float
-
-    @property
-    def angle(self):
-        return self._angle
-
-    @angle.setter
-    def angle(self, value):
-        self._angle = value % (2 * math.pi)
-
-    @property
-    def angle_deg(self):
-        return math.degrees(self.angle)
-
-    @angle_deg.setter
-    def angle_deg(self, value):
-        self.angle = math.radians(value)
-
-    @property
-    def position(self) -> Vec2[float]:
-        return Vec2(self.x, self.y)
-
-    @position.setter
-    def position(self, value: Vec2[float]):
-        self.x = value.x
-        self.y = value.y
-
-    def __init__(self, x: float = 0, y: float = 0, z: float = 0, angle: float = 0, scale: float = 1):
-        self.x = x
-        self.y = y
-        self.z = z
-        self.angle = angle
-        self.scale = scale
-
-    def __add__(self, other):
-        return Transform(self.x + other.x, self.y + other.y, self.z + other.z, self.angle + other.angle, self.scale)
-
-    def __sub__(self, other):
-        return Transform(self.x - other.x, self.y - other.y, self.z - other.z, self.angle - other.angle, self.scale)
-
-    def __mul__(self, other: float):
-        return Transform(self.x * other, self.y * other, self.z, self.angle, self.scale)
+    def __init__(self, position: Vec3[float] = None, rotation: Quaternion = None, scale: Vec3[float] = None):
+        self.position = position if position is not None else Vec3(0.0, 0.0, 0.0)
+        self.rotation = rotation if rotation is not None else Quaternion()
+        self.scale = scale if scale is not None else Vec3(1.0, 1.0, 1.0)
 
     def __eq__(self, other):
-        return self.x == other.x and self.y == other.y and self.z == other.z and self.angle == other.angle and self.scale == other.scale
+        if not isinstance(other, Transform):
+            return NotImplemented
+        return self.position == other.position and self.rotation == other.rotation and self.scale == other.scale
 
     def __str__(self):
-        return f"Transform(x={self.x}, y={self.y}, z={self.z}, angle={self.angle}, scale={self.scale})"
+        pos_str = f"({self.position.x:.2f}, {self.position.y:.2f}, {self.position.z:.2f})"
+        rot_str = f"({self.rotation.w:.2f}, {self.rotation.x:.2f}, {self.rotation.y:.2f}, {self.rotation.z:.2f})"
+        scl_str = f"({self.scale.x:.2f}, {self.scale.y:.2f}, {self.scale.z:.2f})"
+        return f"Transform3D(position={pos_str}, rotation={rot_str}, scale={scl_str})"
 
     def clone(self):
-        return Transform(self.x, self.y, self.z, self.angle, self.scale)
-
-    def ToGlobal(self, global_transform: 'Transform | None' = None) -> 'Transform':
-        global_transform = global_transform if global_transform else Transform.Global
-        # Rotate point by Global.angle
-        new_x = self.x * math.cos(global_transform.angle) - self.y * math.sin(global_transform.angle)
-        new_y = self.x * math.sin(global_transform.angle) + self.y * math.cos(global_transform.angle)
-
-        # Scale point
-        new_x *= global_transform.scale
-        new_y *= global_transform.scale
-
         return Transform(
-            new_x + global_transform.x,
-            new_y + global_transform.y,
-            self.z + global_transform.z,
-            self.angle + global_transform.angle,
-            self.scale * global_transform.scale
+            Vec3(self.position.x, self.position.y, self.position.z),
+            Quaternion(self.rotation.w, self.rotation.x, self.rotation.y, self.rotation.z),
+            Vec3(self.scale.x, self.scale.y, self.scale.z)
         )
 
-    def apply_transform(self, point: Tuple[float, float]) -> Tuple[float, float]:
-        # Rotate point by self.angle
-        new_x = point[0] * math.cos(self.angle) - point[1] * math.sin(self.angle)
-        new_y = point[0] * math.sin(self.angle) + point[1] * math.cos(self.angle)
+    def ToGlobal(self, global_transform: 'Transform3D | None' = None) -> 'Transform':
+        parent_global = global_transform if global_transform else Transform.Global
 
-        # Scale point
-        new_x *= self.scale
-        new_y *= self.scale
+        # Combina rotações multiplicando os quaternions
+        global_rotation = parent_global.rotation * self.rotation
 
-        return new_x + self.x, new_y + self.y
+        # Combina escalas com multiplicação por componente
+        global_scale = Vec3(
+            parent_global.scale.x * self.scale.x,
+            parent_global.scale.y * self.scale.y,
+            parent_global.scale.z * self.scale.z
+        )
+
+        # Calcula a posição global
+        scaled_local_pos = Vec3(
+            self.position.x * parent_global.scale.x,
+            self.position.y * parent_global.scale.y,
+            self.position.z * parent_global.scale.z
+        )
+        rotated_pos = parent_global.rotation.rotate_vector(scaled_local_pos)
+        global_position = parent_global.position + rotated_pos
+
+        return Transform(global_position, global_rotation, global_scale)
 
     def SetGlobal(self):
         Transform.Global = self.ToGlobal()

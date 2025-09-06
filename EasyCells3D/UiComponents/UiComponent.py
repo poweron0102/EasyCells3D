@@ -2,7 +2,7 @@ import pygame as pg
 from enum import Enum
 
 from ..Components import Camera
-from ..Components.Camera import Drawable
+from ..Components.Camera import Hittable
 from ..Components.Component import Transform
 from ..Geometry import Vec2
 
@@ -58,7 +58,7 @@ class UiAlignment(Enum):
     GAME_SPACE = 5
 
 
-class UiComponent(Drawable):
+class UiComponent(Hittable):
     _draw_on_screen_space = True
 
     @property
