@@ -1,5 +1,4 @@
 import math
-from typing import Callable
 
 import pygame as pg
 
@@ -60,12 +59,19 @@ class Camera(Component):
     def screen(self):
         return self._screen if self._screen is not None else self.game.screen
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, aspect_ratio: float = 16.0 / 9.0):
+    @property
+    def image_width(self) -> int:
+        return self.screen.get_width()
+
+    @property
+    def image_height(self) -> int:
+        return self.screen.get_height()
+
+    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0):
         """
         Cria uma câmara 3D para ray tracing.
         :param screen: A superfície do pygame para renderizar. Se for None, usa o ecrã principal do jogo.
         :param vfov: Campo de visão vertical em graus.
-        :param aspect_ratio: A proporção da imagem.
         """
         super().__init__()
         if Game.current_instance not in Camera.instances:
@@ -73,11 +79,6 @@ class Camera(Component):
 
         self.hittables: list[Hittable] = []
         self._screen = screen
-
-        # Propriedades da Imagem
-        self.image_width = 400
-        self.aspect_ratio = aspect_ratio
-        self.image_height = int(self.image_width / self.aspect_ratio)
 
         # Propriedades da Câmara
         self.vfov = vfov
@@ -137,24 +138,18 @@ class Camera(Component):
         """O loop principal de renderização. Lança raios para cada pixel."""
         self._update_camera_geometry()
 
-        target_surface = self.screen
-
-        # Redimensiona a imagem renderizada para caber na superfície de destino
-        render_surface = pg.Surface((self.image_width, self.image_height))
-
+        render_array = pg.surfarray.pixels3d(self.screen)
         for j in range(self.image_height):
             for i in range(self.image_width):
                 ray = self._get_ray(i, j)
                 color_vec = self._ray_color(ray)
 
-                # Converte o vetor de cor [0,1] para RGB [0,255]
                 r = int(255.999 * color_vec.x)
                 g = int(255.999 * color_vec.y)
                 b = int(255.999 * color_vec.z)
-                render_surface.set_at((i, j), (r, g, b))
 
-        # Desenha a superfície renderizada no ecrã principal
-        pg.transform.scale(render_surface, target_surface.get_size(), target_surface)
+                render_array[i, j] = (r, g, b)
+            pg.display.flip()
 
     def _get_ray(self, i: int, j: int) -> Ray:
         """Obtém um raio da câmara para um pixel específico."""
@@ -183,3 +178,11 @@ class Camera(Component):
         unit_direction = ray.direction.normalize()
         a = 0.5 * (unit_direction.y + 1.0)
         return Vec3(1.0, 1.0, 1.0) * (1.0 - a) + Vec3(0.5, 0.7, 1.0) * a
+
+        # Make a xadrez
+        # checker_size = 0.1
+        #
+        # # if (math.floor(ray.direction.x / checker_size) + math.floor(ray.direction.y / checker_size)) % 2 == 0:
+        # #     return Vec3(1.0, 1.0, 1.0)
+        # # else:
+        # #     return Vec3(0.0, 0.0, 0.0)

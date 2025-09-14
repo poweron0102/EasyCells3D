@@ -1,3 +1,4 @@
+import math
 import traceback
 from typing import TYPE_CHECKING
 from typing import Type
@@ -212,3 +213,12 @@ class Transform:
 
     def SetGlobal(self):
         Transform.Global = self.ToGlobal()
+
+    @property
+    def forward(self):
+        """Vetor forward (frente) do transform."""
+        return self.rotation.rotate_vector(Vec3(0, 0, -1)).normalize()
+
+    @forward.setter
+    def forward(self, value: Vec3[float]):
+        """Define o vetor forward (frente) do transform."""
