@@ -1,10 +1,14 @@
 import math
-
+import numpy as np
 import pygame as pg
+from numba import cuda
 
 from .Component import Component, Transform
 from .. import Game
 from ..Geometry import Vec3, Ray, HitInfo
+# Importar o renderizador CUDA
+from EasyCells3D import CudaRenderer
+
 
 
 class Hittable(Component):
@@ -67,11 +71,12 @@ class Camera(Component):
     def image_height(self) -> int:
         return self.screen.get_height()
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0):
+    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, use_cuda=True):
         """
         Cria uma câmara 3D para ray tracing.
         :param screen: A superfície do pygame para renderizar. Se for None, usa o ecrã principal do jogo.
         :param vfov: Campo de visão vertical em graus.
+        :param use_cuda: Se verdadeiro, tenta usar a GPU para renderizar.
         """
         super().__init__()
         if Game.current_instance not in Camera.instances:
@@ -80,14 +85,27 @@ class Camera(Component):
         self.hittables: list[Hittable] = []
         self._screen = screen
 
+        # Tenta usar CUDA, se falhar, volta para CPU
+        self.use_cuda = use_cuda
+        if self.use_cuda:
+            try:
+                cuda.detect()
+                print("Dispositivo CUDA detectado. A renderização será feita na GPU.")
+            except cuda.CudaSupportError:
+                print("Nenhum dispositivo CUDA encontrado. A renderizar na CPU.")
+                self.use_cuda = False
+
         # Propriedades da Câmara
         self.vfov = vfov
         self.center = Vec3(0.0, 0.0, 0.0)
 
-        # Valores calculados no 'init' ou 'loop'
+        # Valores calculados
         self.pixel00_loc = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_u = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_v = Vec3(0.0, 0.0, 0.0)
+
+        # Array para a imagem renderizada (usado por CPU e CUDA)
+        self._render_array_np = None
 
     def on_destroy(self):
         if Game.current_instance in Camera.instances and Camera.instances[Game.current_instance] == self:
@@ -104,17 +122,14 @@ class Camera(Component):
 
     def _update_camera_geometry(self):
         """Calcula a geometria da câmara para a renderização."""
-        self.center = Transform.Global.position
+        self.center = self.transform.Global.position
 
-        # Determina as dimensões do viewport
         focal_length = 1.0
         theta = math.radians(self.vfov)
         h = math.tan(theta / 2)
         viewport_height = 2 * h * focal_length
         viewport_width = viewport_height * (self.image_width / self.image_height)
 
-        # Calcula os vetores da base ortonormal u,v,w para a orientação da câmara
-        # Assumindo que a câmara olha para -Z por padrão. A rotação do transform irá ajustá-la.
         forward = Vec3(0.0, 0.0, -1.0)
         up = Vec3(0.0, 1.0, 0.0)
 
@@ -122,23 +137,72 @@ class Camera(Component):
         u = self.transform.rotation.rotate_vector(up).cross(w).normalize()
         v = w.cross(u)
 
-        # Calcula os vetores através do viewport horizontal e vertical
         viewport_u = u * viewport_width
-        viewport_v = -v * viewport_height  # Negativo porque a origem dos pixels é no canto superior esquerdo
+        viewport_v = -v * viewport_height
 
-        # Calcula os deltas de pixel horizontal e vertical
         self.pixel_delta_u = viewport_u / self.image_width
         self.pixel_delta_v = viewport_v / self.image_height
 
-        # Calcula a localização do pixel do canto superior esquerdo
         viewport_upper_left = self.center - (w * focal_length) - viewport_u / 2 - viewport_v / 2
         self.pixel00_loc = viewport_upper_left + (self.pixel_delta_u + self.pixel_delta_v) * 0.5
+
+        # Inicializa o array de renderização se o tamanho do ecrã mudou
+        if self._render_array_np is None or self._render_array_np.shape[1] != self.image_width or \
+                self._render_array_np.shape[0] != self.image_height:
+            self._render_array_np = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
 
     def loop(self):
         """O loop principal de renderização. Lança raios para cada pixel."""
         self._update_camera_geometry()
 
-        render_array = pg.surfarray.pixels3d(self.screen)
+        if self.use_cuda:
+            self._render_cuda()
+        else:
+            self._render_cpu()
+
+        # Desenha o array numpy no ecrã do pygame
+        pg.surfarray.blit_array(self.screen, np.transpose(self._render_array_np, (1, 0, 2)))
+
+    def _render_cuda(self):
+        """Renderiza a cena usando o kernel CUDA."""
+        # 1. Preparar os dados para a GPU
+
+        # Filtra apenas as esferas e cria um array estruturado para elas
+        spheres = [h for h in self.hittables]
+        sphere_dtype = np.dtype([('center', np.float32, 3), ('radius', np.float32)])
+        spheres_np = np.empty(len(spheres), dtype=sphere_dtype)
+
+        for i, sphere in enumerate(spheres):
+            spheres_np[i]['center'] = (
+            sphere.transform.position.x, sphere.transform.position.y, sphere.transform.position.z)
+            spheres_np[i]['radius'] = sphere.radius
+
+        # Converte vetores da câmara para arrays numpy
+        camera_center_np = self.center.to_numpy(dtype=np.float32)
+        pixel00_loc_np = self.pixel00_loc.to_numpy(dtype=np.float32)
+        pixel_delta_u_np = self.pixel_delta_u.to_numpy(dtype=np.float32)
+        pixel_delta_v_np = self.pixel_delta_v.to_numpy(dtype=np.float32)
+
+        # 2. Configurar a execução do Kernel
+        threads_per_block = (16, 16)
+        blocks_per_grid_x = math.ceil(self.image_width / threads_per_block[0])
+        blocks_per_grid_y = math.ceil(self.image_height / threads_per_block[1])
+        blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+
+        # 3. Executar o Kernel
+        CudaRenderer.render_kernel[blocks_per_grid, threads_per_block](
+            self._render_array_np,
+            camera_center_np,
+            pixel00_loc_np,
+            pixel_delta_u_np,
+            pixel_delta_v_np,
+            spheres_np
+        )
+        cuda.synchronize()  # Espera a GPU terminar
+
+    def _render_cpu(self):
+        """Renderiza a cena usando a CPU (código original)."""
+        render_array = np.transpose(self._render_array_np, (1, 0, 2))  # surfarray usa (width, height)
         for j in range(self.image_height):
             for i in range(self.image_width):
                 ray = self._get_ray(i, j)
@@ -149,7 +213,6 @@ class Camera(Component):
                 b = int(255.999 * color_vec.z)
 
                 render_array[i, j] = (r, g, b)
-            pg.display.flip()
 
     def _get_ray(self, i: int, j: int) -> Ray:
         """Obtém um raio da câmara para um pixel específico."""
@@ -178,11 +241,3 @@ class Camera(Component):
         unit_direction = ray.direction.normalize()
         a = 0.5 * (unit_direction.y + 1.0)
         return Vec3(1.0, 1.0, 1.0) * (1.0 - a) + Vec3(0.5, 0.7, 1.0) * a
-
-        # Make a xadrez
-        # checker_size = 0.1
-        #
-        # # if (math.floor(ray.direction.x / checker_size) + math.floor(ray.direction.y / checker_size)) % 2 == 0:
-        # #     return Vec3(1.0, 1.0, 1.0)
-        # # else:
-        # #     return Vec3(0.0, 0.0, 0.0)

@@ -117,6 +117,9 @@ class Game:
                 pg.quit()
                 sys.exit()
 
+        #pg.image.save(self.screen, f"frames/screenshot_{self.time}.png")
+
+
         pg.display.flip()
         self.screen.fill((30, 30, 30))  # Cinza
         self.clock.tick(1000) # Limitando a 30 FPS

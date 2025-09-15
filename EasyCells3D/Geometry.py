@@ -1,5 +1,6 @@
 import math
 from dataclasses import dataclass
+import numpy as np
 
 
 @dataclass
@@ -125,6 +126,9 @@ class Vec3[T]:
     def magnitude(self) -> float:
         return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
 
+    def to_numpy(self, dtype):
+        return np.array([self.x, self.y, self.z], dtype=dtype)
+
 
 @dataclass
 class Quaternion:
@@ -195,6 +199,43 @@ class Quaternion:
         yaw = math.atan2(siny_cosp, cosy_cosp)
 
         return Vec3(roll, pitch, yaw)
+
+    def to_numpy(self, dtype):
+        return np.array([self.w, self.x, self.y, self.z], dtype=dtype)
+
+
+@dataclass
+class Color:
+    r: int
+    g: int
+    b: int
+
+    def to_tuple(self) -> tuple[int, int, int]:
+        return self.r, self.g, self.b
+
+    @staticmethod
+    def from_tuple(t: tuple[int, int, int]) -> 'Color':
+        return Color(t[0], t[1], t[2])
+
+    @staticmethod
+    def black() -> 'Color':
+        return Color(0, 0, 0)
+
+    @staticmethod
+    def white() -> 'Color':
+        return Color(255, 255, 255)
+
+    @staticmethod
+    def red() -> 'Color':
+        return Color(255, 0, 0)
+
+    @staticmethod
+    def green() -> 'Color':
+        return Color(0, 255, 0)
+
+    @staticmethod
+    def blue() -> 'Color':
+        return Color(0, 0, 255)
 
 
 @dataclass

@@ -16,4 +16,5 @@ __all__ = [
     "UiComponents",
     "PhysicsComponents",
     "NetworkComponents",
+    "CudaRenderer",
 ]
