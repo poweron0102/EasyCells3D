@@ -130,7 +130,7 @@ class Camera(Component):
         viewport_height = 2 * h * focal_length
         viewport_width = viewport_height * (self.image_width / self.image_height)
 
-        forward = Vec3(0.0, 0.0, -1.0)
+        forward = Vec3(0.0, 0.0, 1.0)
         up = Vec3(0.0, 1.0, 0.0)
 
         w = self.transform.rotation.rotate_vector(forward).normalize()

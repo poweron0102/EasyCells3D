@@ -150,6 +150,8 @@ class Quaternion:
             z=axis.z * sin_half
         )
 
+
+
     def __mul__(self, other: 'Quaternion') -> 'Quaternion':
         """Multiplicação de quaternions para combinar rotações."""
         w = self.w * other.w - self.x * other.x - self.y * other.y - self.z * other.z
@@ -199,6 +201,24 @@ class Quaternion:
         yaw = math.atan2(siny_cosp, cosy_cosp)
 
         return Vec3(roll, pitch, yaw)
+
+    @staticmethod
+    def from_euler_angles(dir: Vec3[float]) -> 'Quaternion':
+        """Cria um quaternion a partir de ângulos de Euler (roll, pitch, yaw)."""
+        cy = math.cos(dir.z * 0.5)
+        sy = math.sin(dir.z * 0.5)
+        cp = math.cos(dir.y * 0.5)
+        sp = math.sin(dir.y * 0.5)
+        cr = math.cos(dir.x * 0.5)
+        sr = math.sin(dir.x * 0.5)
+
+        return Quaternion(
+            w=cr * cp * cy + sr * sp * sy,
+            x=sr * cp * cy - cr * sp * sy,
+            y=cr * sp * cy + sr * cp * sy,
+            z=cr * cp * sy - sr * sp * cy
+        )
+
 
     def to_numpy(self, dtype):
         return np.array([self.w, self.x, self.y, self.z], dtype=dtype)
