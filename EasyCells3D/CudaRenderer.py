@@ -77,7 +77,14 @@ def sphere_intersect(ray_origin, ray_direction, sphere_center, sphere_radius):
 # Cada thread da GPU executará esta função para um píxel diferente.
 
 @cuda.jit
-def render_kernel(pixel_array, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v, spheres):
+def render_kernel(
+        pixel_array,
+        camera_center,
+        pixel00_loc,
+        pixel_delta_u,
+        pixel_delta_v,
+        spheres
+    ):
     """
     Kernel CUDA para renderizar a cena. Cada thread calcula a cor de um píxel.
     """
@@ -113,7 +120,7 @@ def render_kernel(pixel_array, camera_center, pixel00_loc, pixel_delta_u, pixel_
 
         dist, normal = sphere_intersect(ray_origin, ray_direction, sphere_center, sphere_radius)
 
-        if dist > 0.001 and dist < min_dist:
+        if 0.001 < dist < min_dist:
             min_dist = dist
             hit_normal = normal
             hit = True

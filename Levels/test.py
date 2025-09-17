@@ -3,6 +3,7 @@ from EasyCells3D.Components import Camera, Item
 from EasyCells3D.Components.SphereHittable import SphereHittable
 from EasyCells3D.Geometry import Vec3, Quaternion
 from EasyCells3D.scheduler import Tick
+import random
 
 import pygame as pg
 
@@ -17,7 +18,8 @@ def init(game: Game):
     global camera
     camera = game.CreateItem()
     camera.AddComponent(Camera(vfov=40))
-    camera.transform.forward = Vec3(0, 0, 1)
+    camera.transform.position = Vec3(0, 0, 5)  # Posição inicial da câmera
+    camera.transform.forward = Vec3(0, 0, -1) # Aponta para a origem
 
     # Centraliza e oculta o cursor do mouse para melhor controle da câmera
     pg.mouse.set_visible(False)
@@ -37,25 +39,44 @@ def init(game: Game):
     bola.AddComponent(SphereHittable(0.5))
     bola.transform.position += Vec3(-2, 0, -5)
 
+    # Spown 30 spheres in random positions near 0, 0, 0
+    for _ in range(30):
+        bola = game.CreateItem()
+        bola.AddComponent(SphereHittable(0.5))
+        bola.transform.position += Vec3(random.uniform(-10, 10), random.uniform(-10, 10), random.uniform(-10, 10))
+
 
 def loop(game: Game):
     # --- Rotação da Câmera com o Mouse ---
-    mouse_sensitivity = 0.2
-    dx, dy = pg.mouse.get_rel()
 
-    # Rotação Yaw (esquerda/direita) em torno do eixo Y global
-    if dx != 0:
-        yaw_rotation = Quaternion.from_axis_angle(Vec3(0, 1, 0), -dx * mouse_sensitivity * game.delta_time)
-        camera.transform.rotation = yaw_rotation * camera.transform.rotation
+    global mouse_on
+    if not mouse_on:
+        mouse_sensitivity = 0.2
+        dx, dy = pg.mouse.get_rel()
 
-    # Rotação Pitch (cima/baixo) em torno do eixo X local (vetor 'right')
-    if dy != 0:
-        right_vector = camera.transform.rotation.rotate_vector(Vec3(1, 0, 0))
-        pitch_rotation = Quaternion.from_axis_angle(right_vector, -dy * mouse_sensitivity * game.delta_time)
-        camera.transform.rotation = pitch_rotation * camera.transform.rotation
+        # Rotação Yaw (esquerda/direita) em torno do eixo Y global
+        if dx != 0:
+            yaw_rotation = Quaternion.from_axis_angle(Vec3(0, 1, 0), -dx * mouse_sensitivity * game.delta_time)
+            camera.transform.rotation = yaw_rotation * camera.transform.rotation
 
-    # Normalizar o quaternion para evitar problemas de ponto flutuante com o tempo
-    camera.transform.rotation = camera.transform.rotation.normalize()
+        # Rotação Pitch (cima/baixo) em torno do eixo X local (vetor 'right')
+        if dy != 0:
+            right_vector = camera.transform.right
+            pitch_rotation = Quaternion.from_axis_angle(right_vector, -dy * mouse_sensitivity * game.delta_time)
+
+            # --- INÍCIO DA MODIFICAÇÃO ---
+            # Calcula a rotação potencial para verificação
+            potential_rotation = pitch_rotation * camera.transform.rotation
+
+            # Para evitar que a câmera vire de cabeça para baixo (e inverta os controles),
+            # verificamos se o vetor 'up' da câmera continua apontando para cima no espaço do mundo.
+            # Se o componente Y do vetor 'up' se tornar negativo, a câmera virou.
+            if potential_rotation.rotate_vector(Vec3(0, 1, 0)).y > 0:
+                camera.transform.rotation = potential_rotation
+            # --- FIM DA MODIFICAÇÃO ---
+
+        # Normalizar o quaternion para evitar problemas de ponto flutuante com o tempo
+        camera.transform.rotation = camera.transform.rotation.normalize()
 
     #print(camera.transform.forward)
 
@@ -64,7 +85,7 @@ def loop(game: Game):
 
     # Obtém os vetores de direção locais da câmera
     forward_vector = camera.transform.forward
-    right_vector = camera.transform.rotation.rotate_vector(Vec3(1, 0, 0))
+    right_vector = camera.transform.right # Usando a property para consistência
 
     movement_input = Vec3(0.0, 0.0, 0.0)
 
@@ -86,7 +107,6 @@ def loop(game: Game):
     camera.transform.position += movement_input * (speed * game.delta_time)
 
     if keys[pg.K_ESCAPE] and tick():
-        global mouse_on
         mouse_on = not mouse_on
         pg.mouse.set_visible(mouse_on)
         pg.event.set_grab(not mouse_on)

@@ -178,7 +178,7 @@ class Transform:
         pos_str = f"({self.position.x:.2f}, {self.position.y:.2f}, {self.position.z:.2f})"
         rot_str = f"({self.rotation.w:.2f}, {self.rotation.x:.2f}, {self.rotation.y:.2f}, {self.rotation.z:.2f})"
         scl_str = f"({self.scale.x:.2f}, {self.scale.y:.2f}, {self.scale.z:.2f})"
-        return f"Transform3D(position={pos_str}, rotation={rot_str}, scale={scl_str})"
+        return f"Transform(position={pos_str}, rotation={rot_str}, scale={scl_str})"
 
     def clone(self):
         return Transform(
@@ -187,7 +187,7 @@ class Transform:
             Vec3(self.scale.x, self.scale.y, self.scale.z)
         )
 
-    def ToGlobal(self, global_transform: 'Transform3D | None' = None) -> 'Transform':
+    def ToGlobal(self, global_transform: 'Transform | None' = None) -> 'Transform':
         parent_global = global_transform if global_transform else Transform.Global
 
         # Combina rotações multiplicando os quaternions
@@ -214,11 +214,66 @@ class Transform:
     def SetGlobal(self):
         Transform.Global = self.ToGlobal()
 
+    @staticmethod
+    def _get_rotation_from_direction(v_from: Vec3[float], value: Vec3[float], fallback_axis: Vec3[float]) -> Quaternion:
+        """Calcula a rotação necessária para alinhar v_from com value."""
+        if value.magnitude() == 0:
+            return Quaternion()
+
+        v_to = value.normalize()
+        dot = v_from.dot(v_to)
+
+        if abs(dot - 1.0) < 1e-7:
+            return Quaternion()
+
+        if abs(dot + 1.0) < 1e-7:
+            return Quaternion.from_axis_angle(fallback_axis, math.pi)
+
+        axis = v_from.cross(v_to)
+        angle = math.acos(dot)
+        return Quaternion.from_axis_angle(axis, angle)
+
     @property
     def forward(self):
-        """Vetor forward (frente) do transform."""
-        return self.rotation.rotate_vector(Vec3(0, 0, -1)).normalize()
+        """Vetor forward (frente) do transform. (-Z)"""
+        return self.rotation.rotate_vector(Vec3(0.0, 0.0, -1.0)).normalize()
 
     @forward.setter
     def forward(self, value: Vec3[float]):
-        """Define o vetor forward (frente) do transform."""
+        """
+        Define a rotação do transform para que seu vetor 'forward' aponte na direção de 'value'.
+        Isso recalcula toda a rotação.
+        """
+        self.rotation = Transform._get_rotation_from_direction(
+            Vec3(0.0, 0.0, -1.0), value, Vec3(0.0, 1.0, 0.0)
+        )
+
+    @property
+    def up(self):
+        """Vetor up (para cima) do transform. (+Y)"""
+        return self.rotation.rotate_vector(Vec3(0.0, 1.0, 0.0)).normalize()
+
+    @up.setter
+    def up(self, value: Vec3[float]):
+        """
+        Define a rotação do transform para que seu vetor 'up' aponte na direção de 'value'.
+        Isso recalcula toda a rotação.
+        """
+        self.rotation = Transform._get_rotation_from_direction(
+            Vec3(0.0, 1.0, 0.0), value, Vec3(0.0, 0.0, 1.0)
+        )
+
+    @property
+    def right(self):
+        """Vetor right (direita) do transform. (+X)"""
+        return self.rotation.rotate_vector(Vec3(1.0, 0.0, 0.0)).normalize()
+
+    @right.setter
+    def right(self, value: Vec3[float]):
+        """
+        Define a rotação do transform para que seu vetor 'right' aponte na direção de 'value'.
+        Isso recalcula toda a rotação.
+        """
+        self.rotation = Transform._get_rotation_from_direction(
+            Vec3(1.0, 0.0, 0.0), value, Vec3(0.0, 1.0, 0.0)
+        )
