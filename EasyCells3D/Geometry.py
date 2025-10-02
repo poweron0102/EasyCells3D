@@ -273,3 +273,4 @@ class HitInfo:
     normal: Vec3[float]
     distance: float
     hit: bool
+    uv: Vec2[float] | None = None

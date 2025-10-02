@@ -71,12 +71,13 @@ class Camera(Component):
     def image_height(self) -> int:
         return self.screen.get_height()
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, use_cuda=True):
+    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, use_cuda=True, light_direction: Vec3 = None):
         """
         Cria uma câmara 3D para ray tracing.
         :param screen: A superfície do pygame para renderizar. Se for None, usa o ecrã principal do jogo.
         :param vfov: Campo de visão vertical em graus.
         :param use_cuda: Se verdadeiro, tenta usar a GPU para renderizar.
+        :param light_direction: A direção da luz principal na cena.
         """
         super().__init__()
         if Game.current_instance not in Camera.instances:
@@ -98,6 +99,11 @@ class Camera(Component):
         # Propriedades da Câmara
         self.vfov = vfov
         self.center = Vec3(0.0, 0.0, 0.0)
+        if light_direction is None:
+            self.light_direction = Vec3(0.0, 1.0, -1.0).normalize()
+        else:
+            self.light_direction = light_direction.normalize()
+
 
         # Valores calculados
         self.pixel00_loc = Vec3(0.0, 0.0, 0.0)
@@ -185,6 +191,7 @@ class Camera(Component):
         pixel00_loc_np = self.pixel00_loc.to_numpy(dtype=np.float32)
         pixel_delta_u_np = self.pixel_delta_u.to_numpy(dtype=np.float32)
         pixel_delta_v_np = self.pixel_delta_v.to_numpy(dtype=np.float32)
+        light_direction_np = self.light_direction.to_numpy(dtype=np.float32)
 
         # 2. Configurar a execução do Kernel
         threads_per_block = (16, 16)
@@ -199,7 +206,8 @@ class Camera(Component):
             pixel00_loc_np,
             pixel_delta_u_np,
             pixel_delta_v_np,
-            spheres_device
+            spheres_device,
+            light_direction_np
         )
         # 4. Copiar o resultado de volta para a CPU para exibição
         self._render_array_device.copy_to_host(self._render_array_np)
@@ -225,9 +233,9 @@ class Camera(Component):
                 ray = self._get_ray(i, j)
                 color_vec = self._ray_color(ray)
 
-                r = int(255.999 * color_vec.x)
-                g = int(255.999 * color_vec.y)
-                b = int(255.999 * color_vec.z)
+                r = int(255.999 * np.clip(color_vec.x, 0, 1))
+                g = int(255.999 * np.clip(color_vec.y, 0, 1))
+                b = int(255.999 * np.clip(color_vec.z, 0, 1))
 
                 render_array[i, j] = (r, g, b)
 
@@ -240,6 +248,7 @@ class Camera(Component):
     def _ray_color(self, ray: Ray) -> Vec3[float]:
         """Calcula a cor de um raio."""
         closest_hit: HitInfo | None = None
+        closest_hittable: Hittable | None = None
         min_dist = float('inf')
 
         for hittable in self.hittables:
@@ -248,11 +257,37 @@ class Camera(Component):
                 if hit_info and hit_info.hit and 0.001 < hit_info.distance < min_dist:
                     min_dist = hit_info.distance
                     closest_hit = hit_info
+                    closest_hittable = hittable
 
         if closest_hit:
-            # Se atingiu algo, colore com base na normal da superfície
-            n = closest_hit.normal
-            return Vec3(n.x + 1, n.y + 1, n.z + 1) * 0.5
+            # Verifica se o objeto atingido tem um material e coordenadas UV
+            if hasattr(closest_hittable, 'material') and closest_hit.uv is not None:
+                material = closest_hittable.material
+
+                # Cor base da textura ou difusa
+                albedo = material.get_color_at(closest_hit.uv.x, closest_hit.uv.y)
+
+                # Componente emissiva
+                emissive = material.emissive_color
+
+                # Componente difusa
+                light_dir = self.light_direction
+                diffuse_intensity = max(0.0, closest_hit.normal.dot(light_dir))
+                diffuse = albedo * diffuse_intensity
+
+                # Componente especular (Blinn-Phong)
+                view_dir = (ray.origin - closest_hit.point).normalize()
+                half_vector = (light_dir + view_dir).normalize()
+                specular_intensity = pow(max(0.0, closest_hit.normal.dot(half_vector)), material.shininess)
+                specular = Vec3(1.0, 1.0, 1.0) * material.specular * specular_intensity
+
+                # Combina as componentes
+                final_color = emissive + diffuse + specular
+                return final_color
+            else:
+                # Fallback: colore com base na normal da superfície
+                n = closest_hit.normal
+                return Vec3(n.x + 1, n.y + 1, n.z + 1) * 0.5
 
         # Cor de fundo (gradiente do céu)
         unit_direction = ray.direction.normalize()

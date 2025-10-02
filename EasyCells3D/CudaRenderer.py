@@ -83,18 +83,14 @@ def render_kernel(
         pixel00_loc,
         pixel_delta_u,
         pixel_delta_v,
-        spheres
+        spheres,
+        light_direction
     ):
     """
     Kernel CUDA para renderizar a cena. Cada thread calcula a cor de um píxel.
     """
     # Calcula o índice do píxel (i, j) para esta thread específica
     i, j = cuda.grid(2)
-
-    # Verifica se o píxel está dentro dos limites da imagem
-    height, width, _ = pixel_array.shape
-    # if i >= width or j >= height:
-    #     return
 
     # 1. Calcula o raio para o píxel atual (equivalente a `_get_ray`)
     pixel_center_x = pixel00_loc[0] + i * pixel_delta_u[0] + j * pixel_delta_v[0]
@@ -127,10 +123,11 @@ def render_kernel(
 
     # 3. Define a cor final do píxel
     if hit:
-        # Colore com base na normal da superfície
-        r = int(255.999 * (hit_normal[0] + 1) * 0.5)
-        g = int(255.999 * (hit_normal[1] + 1) * 0.5)
-        b = int(255.999 * (hit_normal[2] + 1) * 0.5)
+        # Iluminação difusa simples
+        diffuse = max(0.0, vec3_dot(hit_normal, light_direction))
+        r = int(255.999 * diffuse)
+        g = int(255.999 * diffuse)
+        b = int(255.999 * diffuse)
     else:
         # Cor de fundo (gradiente do céu)
         a = 0.5 * (ray_direction[1] + 1.0)
