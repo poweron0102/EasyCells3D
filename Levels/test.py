@@ -17,7 +17,7 @@ mouse_on: bool = False
 def init(game: Game):
     global camera
     camera = game.CreateItem()
-    camera.AddComponent(Camera(vfov=40))
+    camera.AddComponent(Camera(vfov=60))
     camera.transform.position = Vec3(0, 0, 5)  # Posição inicial da câmera
     camera.transform.forward = Vec3(0, 0, -1) # Aponta para a origem
 

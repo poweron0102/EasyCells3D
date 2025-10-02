@@ -106,6 +106,9 @@ class Camera(Component):
 
         # Array para a imagem renderizada (usado por CPU e CUDA)
         self._render_array_np = None
+        # Array de dispositivo para a imagem renderizada (para CUDA)
+        self._render_array_device = None
+
 
     def on_destroy(self):
         if Game.current_instance in Camera.instances and Camera.instances[Game.current_instance] == self:
@@ -150,9 +153,10 @@ class Camera(Component):
         if self._render_array_np is None or self._render_array_np.shape[1] != self.image_width or \
                 self._render_array_np.shape[0] != self.image_height:
             self._render_array_np = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
+            self._render_array_device = None # Força a recriação do array de dispositivo
 
     def loop(self):
-        """O loop principal de renderização. Lança raios para cada pixel."""
+        """O loop principal de renderização. Lança raios para cada píxel."""
         self._update_camera_geometry()
 
         if self.use_cuda:
@@ -167,15 +171,14 @@ class Camera(Component):
         """Renderiza a cena usando o kernel CUDA."""
         # 1. Preparar os dados para a GPU
 
-        # Filtra apenas as esferas e cria um array estruturado para elas
-        spheres = [h for h in self.hittables]
-        sphere_dtype = np.dtype([('center', np.float32, 3), ('radius', np.float32)])
-        spheres_np = np.empty(len(spheres), dtype=sphere_dtype)
+        # Cria ou reutiliza o array de pixels na memória da GPU
+        if self._render_array_device is None:
+            self._render_array_device = cuda.to_device(self._render_array_np)
 
-        for i, sphere in enumerate(spheres):
-            spheres_np[i]['center'] = (
-            sphere.transform.position.x, sphere.transform.position.y, sphere.transform.position.z)
-            spheres_np[i]['radius'] = sphere.radius
+        # Filtra apenas as esferas e cria um array estruturado para elas
+        spheres_np = self.make_np_objects(self.hittables)
+        # Copia os dados das esferas para a GPU
+        spheres_device = cuda.to_device(spheres_np)
 
         # Converte vetores da câmara para arrays numpy
         camera_center_np = self.center.to_numpy(dtype=np.float32)
@@ -191,14 +194,28 @@ class Camera(Component):
 
         # 3. Executar o Kernel
         CudaRenderer.render_kernel[blocks_per_grid, threads_per_block](
-            self._render_array_np,
+            self._render_array_device,
             camera_center_np,
             pixel00_loc_np,
             pixel_delta_u_np,
             pixel_delta_v_np,
-            spheres_np
+            spheres_device
         )
-        cuda.synchronize()  # Espera a GPU terminar
+        # 4. Copiar o resultado de volta para a CPU para exibição
+        self._render_array_device.copy_to_host(self._render_array_np)
+
+    @staticmethod
+    def make_np_objects(hittables):
+        from .SphereHittable import SphereHittable
+        spheres = [h for h in hittables if isinstance(h, SphereHittable)]
+
+        sphere_dtype = np.dtype([('center', np.float32, 3), ('radius', np.float32)])
+        spheres_np = np.empty(len(spheres), dtype=sphere_dtype)
+        for i, sphere in enumerate(spheres):
+            spheres_np[i]['center'] = (
+                sphere.transform.position.x, sphere.transform.position.y, sphere.transform.position.z)
+            spheres_np[i]['radius'] = sphere.radius
+        return spheres_np
 
     def _render_cpu(self):
         """Renderiza a cena usando a CPU (código original)."""

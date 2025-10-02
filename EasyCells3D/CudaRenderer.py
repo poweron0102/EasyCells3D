@@ -93,8 +93,8 @@ def render_kernel(
 
     # Verifica se o píxel está dentro dos limites da imagem
     height, width, _ = pixel_array.shape
-    if i >= width or j >= height:
-        return
+    # if i >= width or j >= height:
+    #     return
 
     # 1. Calcula o raio para o píxel atual (equivalente a `_get_ray`)
     pixel_center_x = pixel00_loc[0] + i * pixel_delta_u[0] + j * pixel_delta_v[0]
