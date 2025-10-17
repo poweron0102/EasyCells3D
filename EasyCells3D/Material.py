@@ -1,6 +1,8 @@
 import pygame as pg
 from numba import cuda
 import numpy as np
+
+from .Components.Camera import Camera
 from .Geometry import Vec3
 from .Game import Game
 
@@ -16,7 +18,7 @@ class Material:
         """
         self.texture = None
         self.gpu_data = None
-        self.use_gpu = Game.instance().use_gpu if Game.instance() else False
+        self.use_gpu = Camera.instance().use_cuda
 
         if texture_path:
             texture_path = "Assets/" + texture_path

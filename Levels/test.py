@@ -51,7 +51,7 @@ def init(game: Game):
                 diffuse_color= Vec3(random.random(), random.random(), random.random()),
                 specular=random.random(),
                 shininess= random.uniform(1, 100),
-                emissive_color= Vec3(random.random(), random.random(), random.random()),
+                #emissive_color= Vec3(random.random(), random.random(), random.random()),
             )
         ))
         bola.transform.position += Vec3(random.uniform(-10, 10), random.uniform(-10, 10), random.uniform(-10, 10))

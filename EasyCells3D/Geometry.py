@@ -227,6 +227,9 @@ class Quaternion:
     def to_numpy(self, dtype):
         return np.array([self.w, self.x, self.y, self.z], dtype=dtype)
 
+    def inverse(self):
+        return Quaternion(self.w, -self.x, -self.y, -self.z)
+
 
 @dataclass
 class Color:

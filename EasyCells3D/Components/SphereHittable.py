@@ -11,20 +11,23 @@ class SphereHittable(Hittable):
         self.radius = radius
         self.material = material if material is not None else Material()
 
-    @staticmethod
-    def get_sphere_uv(normal: Vec3[float]) -> Vec2[float]:
-        """Calcula as coordenadas UV para um ponto numa esfera, dada a normal."""
-        # normal é um vetor unitário.
-        # phi = atan2(z, x)
-        # theta = asin(y)
-        # u = 1 - (phi + pi) / (2 * pi)
-        # v = (theta + pi/2) / pi
-        phi = math.atan2(normal.z, normal.x)
-        theta = math.asin(normal.y)
+    def get_sphere_uv(self, world_normal: Vec3[float]) -> Vec2[float]:
+        """
+        Calcula as coordenadas UV para um ponto na esfera, considerando a rotação do objeto.
+        A normal do mundo é transformada para o espaço local do objeto antes do cálculo.
+        """
+        # Rotaciona a normal do mundo para o espaço local da esfera
+        local_normal = self.transform.rotation.inverse().rotate_vector(world_normal)
+
+        # Mapeamento esférico (equiretangular)
+        # theta: ângulo polar (de -pi/2 a pi/2)
+        # phi: ângulo azimutal (de -pi a pi)
+        theta = math.asin(local_normal.y)
+        phi = math.atan2(local_normal.z, local_normal.x)
+
         u = 1 - (phi + math.pi) / (2 * math.pi)
         v = (theta + math.pi / 2) / math.pi
         return Vec2(u, v)
-
 
     def intersect(self, ray: Ray) -> HitInfo | None:
         center = self.transform.position

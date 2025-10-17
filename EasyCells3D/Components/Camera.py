@@ -181,11 +181,25 @@ class Camera(Component):
         if self._render_array_device is None:
             self._render_array_device = cuda.to_device(self._render_array_np)
 
-        # Filtra apenas as esferas e cria um array estruturado para elas
-        spheres_np = self.make_np_objects(self.hittables)
+        # Prepara os dados de objetos e materiais para a GPU
+        spheres_np, materials_np, textures_np = self.make_np_objects_and_materials(self.hittables)
+
+        if spheres_np is None or spheres_np.size == 0:
+            # Se não há esferas, não há nada para renderizar na GPU.
+            # Podemos limpar o array de renderização e retornar.
+            self._render_array_np.fill(0) # Ou preencher com a cor de fundo
+            return
+
         # Copia os dados das esferas para a GPU
         spheres_device = cuda.to_device(spheres_np)
+        materials_device = cuda.to_device(materials_np)
 
+        # Numba não suporta arrays de arrays de forma direta e eficiente para texturas.
+        # Uma abordagem comum é criar um "texture atlas" ou, para este caso,
+        # vamos passar a primeira textura encontrada como exemplo.
+        # Uma implementação mais robusta lidaria com múltiplas texturas de forma mais genérica.
+        textures_device = cuda.to_device(textures_np)
+        
         # Converte vetores da câmara para arrays numpy
         camera_center_np = self.center.to_numpy(dtype=np.float32)
         pixel00_loc_np = self.pixel00_loc.to_numpy(dtype=np.float32)
@@ -207,23 +221,62 @@ class Camera(Component):
             pixel_delta_u_np,
             pixel_delta_v_np,
             spheres_device,
-            light_direction_np
+            materials_device,
+            textures_device,
+            light_direction_np,
         )
         # 4. Copiar o resultado de volta para a CPU para exibição
         self._render_array_device.copy_to_host(self._render_array_np)
 
     @staticmethod
-    def make_np_objects(hittables):
+    def make_np_objects_and_materials(hittables) -> 'tuple[np.ndarray, np.ndarray, list[cuda.device_array]]':
         from .SphereHittable import SphereHittable
         spheres = [h for h in hittables if isinstance(h, SphereHittable)]
 
-        sphere_dtype = np.dtype([('center', np.float32, 3), ('radius', np.float32)])
+        if not spheres:
+            return None, None, None
+
+        # Estrutura para os dados da esfera na GPU
+        sphere_dtype = np.dtype([
+            ('center', np.float32, 3),
+            ('radius', np.float32),
+            ('rotation', np.float32, 4),  # Quaternion (w, x, y, z)
+            ('material_index', np.int32)
+        ])
+
+        # Estrutura para os dados do material na GPU
+        material_dtype = np.dtype([
+            ('diffuse_color', np.float32, 3),
+            ('specular', np.float32),
+            ('shininess', np.float32),
+            ('emissive_color', np.float32, 3),
+            ('texture_index', np.int32) # -1 se não houver textura
+        ])
+
         spheres_np = np.empty(len(spheres), dtype=sphere_dtype)
+        materials_np = np.empty(len(spheres), dtype=material_dtype)
+        textures_np = []
+
         for i, sphere in enumerate(spheres):
-            spheres_np[i]['center'] = (
-                sphere.transform.position.x, sphere.transform.position.y, sphere.transform.position.z)
+            spheres_np[i]['center'] = sphere.transform.position.to_numpy(dtype=np.float32)
             spheres_np[i]['radius'] = sphere.radius
-        return spheres_np
+            spheres_np[i]['rotation'] = sphere.transform.rotation.to_numpy(dtype=np.float32) # (w,x,y,z)
+            spheres_np[i]['material_index'] = i
+
+            mat = sphere.material
+            materials_np[i]['diffuse_color'] = mat.diffuse_color.to_numpy(dtype=np.float32)
+            materials_np[i]['specular'] = mat.specular
+            materials_np[i]['shininess'] = mat.shininess
+            materials_np[i]['emissive_color'] = mat.emissive_color.to_numpy(dtype=np.float32)
+
+            if mat.gpu_data is None:
+                materials_np[i]['texture_index'] = -1
+            else:
+                materials_np[i]['texture_index'] = len(textures_np)
+                textures_np.append(mat.gpu_data)
+
+
+        return spheres_np, materials_np, textures_np
 
     def _render_cpu(self):
         """Renderiza a cena usando a CPU (código original)."""
