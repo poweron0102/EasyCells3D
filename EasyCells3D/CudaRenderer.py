@@ -143,7 +143,8 @@ def render_kernel(
         spheres,
         materials,
         textures,
-        light_direction
+        light_direction,
+        ambient_light
     ):
     """
     Kernel CUDA para renderizar a cena. Cada thread calcula a cor de um píxel.
@@ -209,6 +210,11 @@ def render_kernel(
         # Componente emissiva
         emissive_r, emissive_g, emissive_b = mat['emissive_color']
 
+        # Componente ambiente
+        ambient_r = albedo_r * ambient_light[0]
+        ambient_g = albedo_g * ambient_light[1]
+        ambient_b = albedo_b * ambient_light[2]
+
         # Componente difusa
         diffuse_intensity = max(0.0, vec3_dot(hit_normal, light_direction))
         diffuse_r = albedo_r * diffuse_intensity
@@ -228,9 +234,9 @@ def render_kernel(
         specular_b = mat['specular'] * specular_intensity
 
         # Combina as componentes
-        final_r = emissive_r + diffuse_r + specular_r
-        final_g = emissive_g + diffuse_g + specular_g
-        final_b = emissive_b + diffuse_b + specular_b
+        final_r = emissive_r + ambient_r + diffuse_r + specular_r
+        final_g = emissive_g + ambient_g + diffuse_g + specular_g
+        final_b = emissive_b + ambient_b + diffuse_b + specular_b
 
         # Converte para 8-bit e aplica clamp
         r = int(255.999 * min(1.0, final_r))

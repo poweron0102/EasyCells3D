@@ -71,7 +71,7 @@ class Camera(Component):
     def image_height(self) -> int:
         return self.screen.get_height()
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, use_cuda=True, light_direction: Vec3 = None):
+    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, use_cuda=True, light_direction: Vec3 = None, ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1)):
         """
         Cria uma câmara 3D para ray tracing.
         :param screen: A superfície do pygame para renderizar. Se for None, usa o ecrã principal do jogo.
@@ -99,6 +99,7 @@ class Camera(Component):
         # Propriedades da Câmara
         self.vfov = vfov
         self.center = Vec3(0.0, 0.0, 0.0)
+        self.ambient_light = ambient_light
         if light_direction is None:
             self.light_direction = Vec3(0.0, 1.0, -1.0).normalize()
         else:
@@ -193,11 +194,6 @@ class Camera(Component):
         # Copia os dados das esferas para a GPU
         spheres_device = cuda.to_device(spheres_np)
         materials_device = cuda.to_device(materials_np)
-
-        # Numba não suporta arrays de arrays de forma direta e eficiente para texturas.
-        # Uma abordagem comum é criar um "texture atlas" ou, para este caso,
-        # vamos passar a primeira textura encontrada como exemplo.
-        # Uma implementação mais robusta lidaria com múltiplas texturas de forma mais genérica.
         textures_device = cuda.to_device(textures_np)
         
         # Converte vetores da câmara para arrays numpy
@@ -206,6 +202,7 @@ class Camera(Component):
         pixel_delta_u_np = self.pixel_delta_u.to_numpy(dtype=np.float32)
         pixel_delta_v_np = self.pixel_delta_v.to_numpy(dtype=np.float32)
         light_direction_np = self.light_direction.to_numpy(dtype=np.float32)
+        ambient_light_np = self.ambient_light.to_numpy(dtype=np.float32)
 
         # 2. Configurar a execução do Kernel
         threads_per_block = (16, 16)
@@ -224,6 +221,7 @@ class Camera(Component):
             materials_device,
             textures_device,
             light_direction_np,
+            ambient_light_np,
         )
         # 4. Copiar o resultado de volta para a CPU para exibição
         self._render_array_device.copy_to_host(self._render_array_np)
