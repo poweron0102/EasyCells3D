@@ -1,5 +1,8 @@
 import pygame as pg
+from numba import cuda
+import numpy as np
 from .Geometry import Vec3
+from .Game import Game
 
 class Material:
     def __init__(self, texture_path: str = None, diffuse_color: Vec3 = Vec3(1.0, 1.0, 1.0), specular: float = 0.5, shininess: float = 32.0, emissive_color: Vec3 = Vec3(0.0, 0.0, 0.0)):
@@ -12,9 +15,17 @@ class Material:
         :param emissive_color: A cor que o material emite (luz própria).
         """
         self.texture = None
+        self.gpu_data = None
+        self.use_gpu = Game.instance().use_gpu if Game.instance() else False
+
         if texture_path:
+            texture_path = "Assets/" + texture_path
             try:
                 self.texture = pg.image.load(texture_path)
+                if self.use_gpu:
+                    texture_surface = pg.transform.flip(self.texture, False, True)
+                    texture_data = pg.surfarray.pixels3d(texture_surface)
+                    self.gpu_data = cuda.to_device(np.ascontiguousarray(texture_data))
             except pg.error as e:
                 print(f"Erro ao carregar a textura: {texture_path} - {e}")
 
@@ -22,6 +33,7 @@ class Material:
         self.specular = specular
         self.shininess = shininess
         self.emissive_color = emissive_color
+
 
     def get_color_at(self, u: float, v: float) -> Vec3:
         """
@@ -37,3 +49,4 @@ class Material:
             return Vec3(color.r / 255.0, color.g / 255.0, color.b / 255.0)
         else:
             return self.diffuse_color
+

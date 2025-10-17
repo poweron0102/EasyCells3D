@@ -25,6 +25,7 @@ class SphereHittable(Hittable):
         v = (theta + math.pi / 2) / math.pi
         return Vec2(u, v)
 
+
     def intersect(self, ray: Ray) -> HitInfo | None:
         center = self.transform.position
         oc = ray.origin - center
@@ -47,4 +48,4 @@ class SphereHittable(Hittable):
         normal = (point - center).normalize()
         uv = self.get_sphere_uv(normal)
 
-        return HitInfo(point=point, normal=normal, distance=root, hit=True, uv=uv)
+        return HitInfo(point=point, normal=normal, distance=root, hit=True, uv=uv, material=self.material)

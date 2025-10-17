@@ -2,6 +2,7 @@ from EasyCells3D import Game
 from EasyCells3D.Components import Camera, Item
 from EasyCells3D.Components.SphereHittable import SphereHittable
 from EasyCells3D.Geometry import Vec3, Quaternion
+from EasyCells3D.Material import Material
 from EasyCells3D.scheduler import Tick
 import random
 
@@ -17,9 +18,9 @@ mouse_on: bool = False
 def init(game: Game):
     global camera
     camera = game.CreateItem()
-    camera.AddComponent(Camera(vfov=60))
-    camera.transform.position = Vec3(0, 0, 5)  # Posição inicial da câmera
-    camera.transform.forward = Vec3(0, 0, -1) # Aponta para a origem
+    camera.AddComponent(Camera(vfov=60, use_cuda=True))
+    camera.transform.position = Vec3(0, 0, -8)  # Posição inicial da câmera
+    camera.transform.forward = Vec3(0, 0, 1) # Aponta para a origem
 
     # Centraliza e oculta o cursor do mouse para melhor controle da câmera
     pg.mouse.set_visible(False)
@@ -27,22 +28,32 @@ def init(game: Game):
 
     global bola
     # Posiciona as esferas na frente da câmera para serem visíveis no início
-    bola = game.CreateItem()
-    bola.AddComponent(SphereHittable(0.5))
-    bola.transform.position += Vec3(0, 0, -5)
-
-    bola = game.CreateItem()
-    bola.AddComponent(SphereHittable(0.5))
-    bola.transform.position += Vec3(2, 0, -5)
-
-    bola = game.CreateItem()
-    bola.AddComponent(SphereHittable(0.5))
-    bola.transform.position += Vec3(-2, 0, -5)
+    # bola = game.CreateItem()
+    # bola.AddComponent(SphereHittable(0.5))
+    # bola.transform.position += Vec3(0, 0, -5)
+    #
+    # bola = game.CreateItem()
+    # bola.AddComponent(SphereHittable(0.5))
+    # bola.transform.position += Vec3(2, 0, -5)
+    #
+    # bola = game.CreateItem()
+    # bola.AddComponent(SphereHittable(0.5))
+    # bola.transform.position += Vec3(-2, 0, -5)
 
     # Spown 30 spheres in random positions near 0, 0, 0
     for _ in range(30):
         bola = game.CreateItem()
-        bola.AddComponent(SphereHittable(0.5))
+        texture_path = "Texture/" + random.choice(['brick.png', 'command_block.png', 'dark_oak_log.png', 'enchanting_table_bottom.png', 'redstone_lamp_off.png', 'redstone_lamp_on.png', 'spruce_log.png', 'stone_andesite_smooth.png', 'stone_bricks.png', 'stone_granite_smooth.png', 'stone_slab_top.png', 'tnt_side.png', 'warped_planks.png', 'wool_colored_cyan.png', 'wool_colored_gray.png', 'wool_colored_green.png', 'wool_colored_light_blue.png', 'wool_colored_lime.png', 'wool_colored_magenta.png', 'wool_colored_orange.png'])
+        bola.AddComponent(SphereHittable(
+            0.5,
+            Material(
+                texture_path,
+                diffuse_color= Vec3(random.random(), random.random(), random.random()),
+                specular=random.random(),
+                shininess= random.uniform(1, 100),
+                emissive_color= Vec3(random.random(), random.random(), random.random()),
+            )
+        ))
         bola.transform.position += Vec3(random.uniform(-10, 10), random.uniform(-10, 10), random.uniform(-10, 10))
 
 

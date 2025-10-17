@@ -3,12 +3,6 @@ from numba import cuda
 import numpy as np
 
 
-# ==================================================================================================
-# Funções de Dispositivo (Executam na GPU para cada thread)
-# ==================================================================================================
-# Estas são funções auxiliares que são chamadas a partir do kernel principal.
-# O decorador `cuda.jit(device=True)` indica que elas serão compiladas para código de GPU.
-
 @cuda.jit(device=True)
 def vec3_dot(a, b):
     """Calcula o produto escalar de dois vetores 3D."""
@@ -69,12 +63,6 @@ def sphere_intersect(ray_origin, ray_direction, sphere_center, sphere_radius):
 
     return root, normal
 
-
-# ==================================================================================================
-# Kernel CUDA (Executa na GPU)
-# ==================================================================================================
-# Esta é a função principal que a GPU irá executar.
-# Cada thread da GPU executará esta função para um píxel diferente.
 
 @cuda.jit
 def render_kernel(

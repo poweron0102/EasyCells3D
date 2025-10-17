@@ -1,6 +1,10 @@
 import math
 from dataclasses import dataclass
 import numpy as np
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from EasyCells3D.Material import Material
 
 
 @dataclass
@@ -274,3 +278,4 @@ class HitInfo:
     distance: float
     hit: bool
     uv: Vec2[float] | None = None
+    material: 'Material | None' = None

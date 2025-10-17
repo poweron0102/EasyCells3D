@@ -2,7 +2,7 @@ import asyncio
 import sys
 from importlib import import_module
 from types import ModuleType
-from typing import Callable, TYPE_CHECKING
+from typing import Callable, TYPE_CHECKING, Optional
 
 import pygame as pg
 from pygame.event import Event
@@ -23,7 +23,9 @@ class Game:
     current_instance: int = 0
 
     @staticmethod
-    def instance() -> 'Game':
+    def instance() -> Optional['Game']:
+        if not Game.instances or Game.current_instance not in Game.instances:
+            return None
         return Game.instances[Game.current_instance]
 
     level: ModuleType
@@ -49,6 +51,7 @@ class Game:
             screen_resolution: tuple[int, int] = (800, 600),
             screen_flag: int = 0,
             screen: pg.Surface | None = None,
+            use_gpu: bool = False,
     ):
         # imports: -=-=-=-=-
         global ItemClass
@@ -60,6 +63,9 @@ class Game:
         self.my_instance = Game.instances_count
         Game.instances[self.my_instance] = self
         Game.instances_count += 1
+        Game.current_instance = self.my_instance
+
+        self.use_gpu = use_gpu
 
         if screen is None:
             self.screen: pg.Surface = pg.display.set_mode(screen_resolution, screen_flag)
