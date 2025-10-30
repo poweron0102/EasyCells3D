@@ -256,9 +256,9 @@ class Camera(Component):
         textures_np = []
 
         for i, sphere in enumerate(spheres):
-            spheres_np[i]['center'] = sphere.transform.position.to_numpy(dtype=np.float32)
-            spheres_np[i]['radius'] = sphere.radius
-            spheres_np[i]['rotation'] = sphere.transform.rotation.to_numpy(dtype=np.float32) # (w,x,y,z)
+            spheres_np[i]['center'] = sphere.word_position.position.to_numpy(dtype=np.float32)
+            spheres_np[i]['radius'] = sphere.radius * sphere.word_position.scale.x
+            spheres_np[i]['rotation'] = sphere.word_position.rotation.to_numpy(dtype=np.float32) # (w,x,y,z)
             spheres_np[i]['material_index'] = i
 
             mat = sphere.material

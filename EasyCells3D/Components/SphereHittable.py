@@ -1,15 +1,23 @@
 import math
 
+from EasyCells3D.Components import Transform
 from EasyCells3D.Components.Camera import Hittable
 from EasyCells3D.Geometry import Ray, HitInfo, Vec3, Vec2
 from EasyCells3D.Material import Material
 
 
 class SphereHittable(Hittable):
+    word_position: Transform
+
     def __init__(self, radius: float = 0.5, material: Material = None):
         super().__init__()
         self.radius = radius
         self.material = material if material is not None else Material()
+
+    def init(self):
+        super().init()
+        self.word_position = self.transform
+
 
     def get_sphere_uv(self, world_normal: Vec3[float]) -> Vec2[float]:
         """
@@ -19,9 +27,6 @@ class SphereHittable(Hittable):
         # Rotaciona a normal do mundo para o espaço local da esfera
         local_normal = self.transform.rotation.inverse().rotate_vector(world_normal)
 
-        # Mapeamento esférico (equiretangular)
-        # theta: ângulo polar (de -pi/2 a pi/2)
-        # phi: ângulo azimutal (de -pi a pi)
         theta = math.asin(local_normal.y)
         phi = math.atan2(local_normal.z, local_normal.x)
 
@@ -52,3 +57,6 @@ class SphereHittable(Hittable):
         uv = self.get_sphere_uv(normal)
 
         return HitInfo(point=point, normal=normal, distance=root, hit=True, uv=uv, material=self.material)
+
+    def loop(self):
+        self.word_position = Transform.Global
