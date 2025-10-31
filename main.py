@@ -16,9 +16,10 @@ from EasyCells3D import Game
 import pygame as pg
 
 import Levels.test
+import Levels.solar
 
 if __name__ == '__main__':
     #GAME = Game(Levels.space_selector, "Spaceship", True, (1280, 720))
-    GAME = Game(Levels.test, "RayTracing", True, (1280, 720), screen_flag=pg.RESIZABLE)
+    GAME = Game(Levels.solar, "RayTracing", True, (1280, 720), screen_flag=pg.RESIZABLE)
     GAME.run()
     # asyncio.run(GAME.run_async())

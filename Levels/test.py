@@ -1,11 +1,10 @@
+from UserComponents.ratating_obj import RotatingObj
 from EasyCells3D import Game
 from EasyCells3D.Components import Camera, Item
 from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
-from EasyCells3D.Geometry import Vec3, Quaternion
+from EasyCells3D.Geometry import Vec3
 from EasyCells3D.Material import Material
-from EasyCells3D.scheduler import Tick
-import math
 import random
 
 import pygame as pg
@@ -43,6 +42,8 @@ def init(game: Game):
         ))
         bola.transform.position += Vec3(random.uniform(-10, 10), random.uniform(-10, 10), random.uniform(-10, 10))
 
+    bola.AddComponent(RotatingObj(90))
+
     global filha
     filha = bola.CreateChild()
     filha.AddComponent(SphereHittable(
@@ -59,7 +60,4 @@ def init(game: Game):
 
 
 def loop(game: Game):
-    rotation_speed = math.radians(45)  # 45 graus por segundo
-    angle_this_frame = rotation_speed * game.delta_time
-    delta_rotation = Quaternion.from_axis_angle(Vec3(0.0, 1.0, 0.0), angle_this_frame)
-    bola.transform.rotation = delta_rotation * bola.transform.rotation
+    pass
