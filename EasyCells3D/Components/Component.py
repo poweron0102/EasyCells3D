@@ -94,6 +94,15 @@ class Item:
                     return resp
             return None
 
+    def SetParent(self, parent):
+        if self.parent:
+            self.parent.children.remove(self)
+        if parent:
+            parent.children.add(self)
+        self.parent = parent
+
+
+
 
 class Component:
     item: Item

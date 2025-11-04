@@ -10,10 +10,28 @@ from UserComponents.ratating_obj import RotatingObj
 
 
 def init(game: Game):
+    # --- Configuração da Cena e Variáveis de Controle ---
+    speed_scale = 0.5  # Multiplicador global para todas as velocidades de rotação e órbita
+
+    def create_planet(name: str, radius: float, texture: str, distance: float, orbit_speed: float, rotation_speed: float) -> Item:
+        """
+        Função auxiliar para criar um planeta com sua órbita.
+        """
+        orbit = game.CreateItem()
+        orbit.AddComponent(RotatingObj(speed=orbit_speed * speed_scale))
+
+        planet: Item = orbit.CreateChild()
+        planet.transform.position = Vec3(distance, 0, 0)
+        planet.AddComponent(SphereHittable(radius, Material(texture)))
+        planet.AddComponent(RotatingObj(speed=rotation_speed * speed_scale))
+        return planet
+
+    # --- Câmera e Controles ---
     camera = game.CreateItem()
     # A luz ambiente é baixa para que o Sol seja a principal fonte de luz.
     camera.AddComponent(Camera(vfov=60, use_cuda=True, ambient_light=Vec3(0.05, 0.05, 0.05)))
-    camera.transform.position = Vec3(0, 5, -15)
+    # Posição inicial da câmera ajustada para ver todo o sistema
+    camera.transform.position = Vec3(0, 15, -40)
     camera.transform.forward = Vec3(0, 0, 1)
     camera.AddComponent(FreeCam())
 
@@ -21,37 +39,34 @@ def init(game: Game):
     pg.mouse.set_visible(False)
     pg.event.set_grab(True)
 
-    # Sol
+    # --- Criação dos Corpos Celestes ---
+
+    # 1. Sol
     sun = game.CreateItem()
     sun.AddComponent(SphereHittable(
-        radius=2.0,
+        radius=3.0,
         material=Material(
-            texture_path="Texture/redstone_lamp_on.png", # Simula uma superfície quente
+            texture_path="Texture/redstone_lamp_on.png",  # Simula uma superfície quente
             emissive_color=Vec3(1.0, 0.8, 0.2) # Cor emissiva forte para iluminar a cena
         )
     ))
-    # O Sol também pode girar em seu próprio eixo
-    sun.AddComponent(RotatingObj(speed=10))
+    sun.AddComponent(RotatingObj(speed=5 * speed_scale))
 
-    # --- Terra e Lua ---
-    # 1. Pivô de órbita da Terra: um objeto vazio que gira ao redor do Sol
-    earth_orbit = game.CreateItem()
-    earth_orbit.AddComponent(RotatingObj(speed=30)) # Velocidade orbital da Terra
+    # 2. Planetas (usando a função auxiliar)
+    # create_planet(nome, raio, textura, distância, vel_órbita, vel_rotação)
+    create_planet("Mercury", 0.3, "Texture/stone_granite_smooth.png", 4.5, 47 * speed_scale, 10 * speed_scale)
+    create_planet("Venus", 0.5, "Texture/wool_colored_orange.png", 7, 35 * speed_scale, -5 * speed_scale) # Rotação retrógrada lenta
 
-    # 2. Planeta Terra: filho do pivô de órbita
-    earth = earth_orbit.CreateChild()
-    earth.transform.position = Vec3(8, 0, 0) # Distância orbital do Sol
-    earth.AddComponent(SphereHittable(0.5, Material("Texture/wool_colored_light_blue.png")))
-    earth.AddComponent(RotatingObj(speed=60)) # Rotação da Terra em seu próprio eixo
+    earth = create_planet("Earth", 0.6, "Texture/wool_colored_light_blue.png", 10, 30 * speed_scale, 60 * speed_scale)
+    create_planet("Mars", 0.4, "Texture/brick.png", 14, 24 * speed_scale, 65 * speed_scale)
+    create_planet("Jupiter", 1.5, "Texture/dark_oak_log.png", 20, 13 * speed_scale, 150 * speed_scale)
+    create_planet("Saturn", 1.3, "Texture/spruce_log.png", 26, 10 * speed_scale, 140 * speed_scale)
+    create_planet("Uranus", 1.0, "Texture/wool_colored_cyan.png", 31, 7 * speed_scale, 90 * speed_scale)
+    create_planet("Neptune", 0.9, "Texture/wool_colored_light_blue.png", 35, 5 * speed_scale, 85 * speed_scale)
 
-    # 3. Pivô de órbita da Lua: um objeto vazio que gira ao redor da Terra
-    moon_orbit = earth.CreateChild()
-    moon_orbit.AddComponent(RotatingObj(speed=120)) # Velocidade orbital da Lua
+    # 3. Lua (continua como filha da Terra)
+    create_planet("Moon", 0.15, "Texture/stone_andesite_smooth.png", 1.5, 120 * speed_scale, 0).SetParent(earth)
 
-    # 4. Lua: filha do pivô de órbita da Lua
-    moon = moon_orbit.CreateChild()
-    moon.transform.position = Vec3(1.5, 0, 0) # Distância orbital da Terra
-    moon.AddComponent(SphereHittable(0.2, Material("Texture/stone_granite_smooth.png")))
 
 def loop(game: Game):
     pass
