@@ -1,14 +1,29 @@
 import math
 import numpy as np
 import pygame as pg
-from numba import cuda
+import taichi as ti
 
-from .Component import Component, Transform
+from .Component import Component
 from .. import Game
 from ..Geometry import Vec3, Ray, HitInfo
-# Importar o renderizador CUDA
+# Importar o renderizador Taichi
 from EasyCells3D import CudaRenderer
 
+# --- Taichi Struct Definitions ---
+Sphere = ti.types.struct(
+    center=ti.types.vector(3, ti.f32),
+    radius=ti.f32,
+    rotation=ti.types.vector(4, ti.f32),  # Quaternion (w, x, y, z)
+    material_index=ti.i32
+)
+
+Material = ti.types.struct(
+    diffuse_color=ti.types.vector(3, ti.f32),
+    specular=ti.f32,
+    shininess=ti.f32,
+    emissive_color=ti.types.vector(3, ti.f32),
+    texture_index=ti.i32  # -1 se não houver textura
+)
 
 
 class Hittable(Component):
@@ -76,7 +91,7 @@ class Camera(Component):
         Cria uma câmara 3D para ray tracing.
         :param screen: A superfície do pygame para renderizar. Se for None, usa o ecrã principal do jogo.
         :param vfov: Campo de visão vertical em graus.
-        :param use_cuda: Se verdadeiro, tenta usar a GPU para renderizar.
+        :param use_cuda: Se verdadeiro, tenta usar a GPU (Taichi) para renderizar.
         :param light_direction: A direção da luz principal na cena.
         """
         super().__init__()
@@ -86,15 +101,12 @@ class Camera(Component):
         self.hittables: list[Hittable] = []
         self._screen = screen
 
-        # Tenta usar CUDA, se falhar, volta para CPU
+        # Com Taichi, a inicialização é feita no módulo do renderizador.
         self.use_cuda = use_cuda
         if self.use_cuda:
-            try:
-                cuda.detect()
-                print("Dispositivo CUDA detectado. A renderização será feita na GPU.")
-            except cuda.CudaSupportError:
-                print("Nenhum dispositivo CUDA encontrado. A renderizar na CPU.")
-                self.use_cuda = False
+            print("Taichi backend selecionado. A renderização será feita na GPU se disponível.")
+        else:
+            print("A renderizar na CPU.")
 
         # Propriedades da Câmara
         self.vfov = vfov
@@ -105,16 +117,18 @@ class Camera(Component):
         else:
             self.light_direction = light_direction.normalize()
 
-
         # Valores calculados
         self.pixel00_loc = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_u = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_v = Vec3(0.0, 0.0, 0.0)
 
-        # Array para a imagem renderizada (usado por CPU e CUDA)
+        # Arrays e campos Taichi
         self._render_array_np = None
-        # Array de dispositivo para a imagem renderizada (para CUDA)
-        self._render_array_device = None
+        self._pixels_field = None
+        self._spheres_field = None
+        self._materials_field = None
+        self._texture_field = None
+        self._has_texture = False
 
 
     def on_destroy(self):
@@ -156,129 +170,102 @@ class Camera(Component):
         viewport_upper_left = self.center - (w * focal_length) - viewport_u / 2 - viewport_v / 2
         self.pixel00_loc = viewport_upper_left + (self.pixel_delta_u + self.pixel_delta_v) * 0.5
 
-        # Inicializa o array de renderização se o tamanho do ecrã mudou
-        if self._render_array_np is None or self._render_array_np.shape[1] != self.image_width or \
-                self._render_array_np.shape[0] != self.image_height:
-            self._render_array_np = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
-            self._render_array_device = None # Força a recriação do array de dispositivo
+        if self._render_array_np is None or self._render_array_np.shape[0] != self.image_width or \
+                self._render_array_np.shape[1] != self.image_height:
+            self._render_array_np = np.zeros((self.image_width, self.image_height, 3), dtype=np.uint8)
+            self._pixels_field = None
+            self._spheres_field = None
+            self._materials_field = None
+            self._texture_field = None
 
     def loop(self):
         """O loop principal de renderização. Lança raios para cada píxel."""
         self._update_camera_geometry()
 
         if self.use_cuda:
-            self._render_cuda()
+            self._render_taichi()
         else:
             self._render_cpu()
 
-        # Desenha o array numpy no ecrã do pygame
-        pg.surfarray.blit_array(self.screen, np.transpose(self._render_array_np, (1, 0, 2)))
+        pg.surfarray.blit_array(self.screen, self._render_array_np)
 
-    def _render_cuda(self):
-        """Renderiza a cena usando o kernel CUDA."""
-        # 1. Preparar os dados para a GPU
-
-        # Cria ou reutiliza o array de pixels na memória da GPU
-        if self._render_array_device is None:
-            self._render_array_device = cuda.to_device(self._render_array_np)
-
-        # Prepara os dados de objetos e materiais para a GPU
-        spheres_np, materials_np, textures_np = self.make_np_objects_and_materials(self.hittables)
-
-        if spheres_np is None or spheres_np.size == 0:
-            # Se não há esferas, não há nada para renderizar na GPU.
-            # Podemos limpar o array de renderização e retornar.
-            self._render_array_np.fill(0) # Ou preencher com a cor de fundo
-            return
-
-        # Copia os dados das esferas para a GPU
-        spheres_device = cuda.to_device(spheres_np)
-        materials_device = cuda.to_device(materials_np)
-        textures_device = cuda.to_device(textures_np)
-        
-        # Converte vetores da câmara para arrays numpy
-        camera_center_np = self.center.to_numpy(dtype=np.float32)
-        pixel00_loc_np = self.pixel00_loc.to_numpy(dtype=np.float32)
-        pixel_delta_u_np = self.pixel_delta_u.to_numpy(dtype=np.float32)
-        pixel_delta_v_np = self.pixel_delta_v.to_numpy(dtype=np.float32)
-        light_direction_np = self.light_direction.to_numpy(dtype=np.float32)
-        ambient_light_np = self.ambient_light.to_numpy(dtype=np.float32)
-
-        # 2. Configurar a execução do Kernel
-        threads_per_block = (16, 16)
-        blocks_per_grid_x = math.ceil(self.image_width / threads_per_block[0])
-        blocks_per_grid_y = math.ceil(self.image_height / threads_per_block[1])
-        blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
-
-        # 3. Executar o Kernel
-        CudaRenderer.render_kernel[blocks_per_grid, threads_per_block](
-            self._render_array_device,
-            camera_center_np,
-            pixel00_loc_np,
-            pixel_delta_u_np,
-            pixel_delta_v_np,
-            spheres_device,
-            materials_device,
-            textures_device,
-            light_direction_np,
-            ambient_light_np,
-        )
-        # 4. Copiar o resultado de volta para a CPU para exibição
-        self._render_array_device.copy_to_host(self._render_array_np)
-
-    @staticmethod
-    def make_np_objects_and_materials(hittables) -> 'tuple[np.ndarray, np.ndarray, list[cuda.device_array]]':
+    def _prepare_taichi_scene(self):
+        """Prepara os dados da cena em campos Taichi para a GPU."""
         from .SphereHittable import SphereHittable
-        spheres = [h for h in hittables if isinstance(h, SphereHittable)]
+        spheres = [h for h in self.hittables if isinstance(h, SphereHittable) and h.enable]
 
         if not spheres:
-            return None, None, None
+            return False
 
-        # Estrutura para os dados da esfera na GPU
-        sphere_dtype = np.dtype([
-            ('center', np.float32, 3),
-            ('radius', np.float32),
-            ('rotation', np.float32, 4),  # Quaternion (w, x, y, z)
-            ('material_index', np.int32)
-        ])
+        if self._spheres_field is None or self._spheres_field.shape[0] != len(spheres):
+            self._spheres_field = Sphere.field(shape=(len(spheres),))
+            self._materials_field = Material.field(shape=(len(spheres),))
 
-        # Estrutura para os dados do material na GPU
-        material_dtype = np.dtype([
-            ('diffuse_color', np.float32, 3),
-            ('specular', np.float32),
-            ('shininess', np.float32),
-            ('emissive_color', np.float32, 3),
-            ('texture_index', np.int32) # -1 se não houver textura
-        ])
-
-        spheres_np = np.empty(len(spheres), dtype=sphere_dtype)
-        materials_np = np.empty(len(spheres), dtype=material_dtype)
-        textures_np = []
+        first_texture_data = None
+        for sphere in spheres:
+            if hasattr(sphere, 'material') and sphere.material.gpu_data is not None:
+                first_texture_data = sphere.material.gpu_data
+                break
+        
+        self._has_texture = first_texture_data is not None
+        if self._has_texture:
+            if self._texture_field is None or \
+               self._texture_field.shape[0] != first_texture_data.shape[0] or \
+               self._texture_field.shape[1] != first_texture_data.shape[1]:
+                self._texture_field = ti.Vector.field(3, dtype=ti.u8, shape=first_texture_data.shape[:2])
+            self._texture_field.from_numpy(first_texture_data)
+        else:
+            if self._texture_field is None:
+                 self._texture_field = ti.Vector.field(3, dtype=ti.u8, shape=(1, 1))
 
         for i, sphere in enumerate(spheres):
-            spheres_np[i]['center'] = sphere.word_position.position.to_numpy(dtype=np.float32)
-            spheres_np[i]['radius'] = sphere.radius * sphere.word_position.scale.x
-            spheres_np[i]['rotation'] = sphere.word_position.rotation.to_numpy(dtype=np.float32) # (w,x,y,z)
-            spheres_np[i]['material_index'] = i
+            self._spheres_field[i].center = sphere.word_position.position.to_numpy(np.float32)
+            self._spheres_field[i].radius = sphere.radius * sphere.word_position.scale.x
+            self._spheres_field[i].rotation = sphere.word_position.rotation.to_numpy(np.float32)
+            self._spheres_field[i].material_index = i
 
             mat = sphere.material
-            materials_np[i]['diffuse_color'] = mat.diffuse_color.to_numpy(dtype=np.float32)
-            materials_np[i]['specular'] = mat.specular
-            materials_np[i]['shininess'] = mat.shininess
-            materials_np[i]['emissive_color'] = mat.emissive_color.to_numpy(dtype=np.float32)
-
-            if mat.gpu_data is None:
-                materials_np[i]['texture_index'] = -1
+            self._materials_field[i].diffuse_color = mat.diffuse_color.to_numpy(np.float32)
+            self._materials_field[i].specular = mat.specular
+            self._materials_field[i].shininess = mat.shininess
+            self._materials_field[i].emissive_color = mat.emissive_color.to_numpy(np.float32)
+            
+            if self._has_texture and mat.gpu_data is not None:
+                self._materials_field[i].texture_index = 0
             else:
-                materials_np[i]['texture_index'] = len(textures_np)
-                textures_np.append(mat.gpu_data)
+                self._materials_field[i].texture_index = -1
+        
+        return True
 
+    def _render_taichi(self):
+        """Renderiza a cena usando o kernel Taichi."""
+        scene_ready = self._prepare_taichi_scene()
 
-        return spheres_np, materials_np, textures_np
+        if not scene_ready:
+            self._render_array_np.fill(0)
+            return
+
+        if self._pixels_field is None:
+            self._pixels_field = ti.Vector.field(3, dtype=ti.u8, shape=(self.image_width, self.image_height))
+
+        CudaRenderer.render_kernel(
+            self._pixels_field,
+            self.center.to_numpy(np.float32),
+            self.pixel00_loc.to_numpy(np.float32),
+            self.pixel_delta_u.to_numpy(np.float32),
+            self.pixel_delta_v.to_numpy(np.float32),
+            self._spheres_field,
+            self._materials_field,
+            self._texture_field,
+            self.light_direction.to_numpy(np.float32),
+            self.ambient_light.to_numpy(np.float32)
+        )
+
+        self._pixels_field.to_numpy(self._render_array_np)
 
     def _render_cpu(self):
         """Renderiza a cena usando a CPU (código original)."""
-        render_array = np.transpose(self._render_array_np, (1, 0, 2))  # surfarray usa (width, height)
+        render_array_transposed = np.transpose(self._render_array_np, (1, 0, 2))
         for j in range(self.image_height):
             for i in range(self.image_width):
                 ray = self._get_ray(i, j)
@@ -288,7 +275,9 @@ class Camera(Component):
                 g = int(255.999 * np.clip(color_vec.y, 0, 1))
                 b = int(255.999 * np.clip(color_vec.z, 0, 1))
 
-                render_array[i, j] = (r, g, b)
+                render_array_transposed[j, i] = (r, g, b)
+        self._render_array_np[:, :, :] = np.transpose(render_array_transposed, (1, 0, 2))
+
 
     def _get_ray(self, i: int, j: int) -> Ray:
         """Obtém um raio da câmara para um pixel específico."""
@@ -311,36 +300,28 @@ class Camera(Component):
                     closest_hittable = hittable
 
         if closest_hit:
-            # Verifica se o objeto atingido tem um material e coordenadas UV
-            if hasattr(closest_hittable, 'material') and closest_hit.uv is not None:
+            if hasattr(closest_hittable, 'material'):
                 material = closest_hittable.material
+                
+                albedo = material.get_color_at(closest_hit.uv.x, closest_hit.uv.y) if closest_hit.uv else material.diffuse_color
 
-                # Cor base da textura ou difusa
-                albedo = material.get_color_at(closest_hit.uv.x, closest_hit.uv.y)
-
-                # Componente emissiva
+                ambient = albedo * self.ambient_light
                 emissive = material.emissive_color
-
-                # Componente difusa
                 light_dir = self.light_direction
                 diffuse_intensity = max(0.0, closest_hit.normal.dot(light_dir))
                 diffuse = albedo * diffuse_intensity
 
-                # Componente especular (Blinn-Phong)
                 view_dir = (ray.origin - closest_hit.point).normalize()
                 half_vector = (light_dir + view_dir).normalize()
                 specular_intensity = pow(max(0.0, closest_hit.normal.dot(half_vector)), material.shininess)
                 specular = Vec3(1.0, 1.0, 1.0) * material.specular * specular_intensity
 
-                # Combina as componentes
-                final_color = emissive + diffuse + specular
+                final_color = emissive + ambient + diffuse + specular
                 return final_color
             else:
-                # Fallback: colore com base na normal da superfície
                 n = closest_hit.normal
                 return Vec3(n.x + 1, n.y + 1, n.z + 1) * 0.5
 
-        # Cor de fundo (gradiente do céu)
         unit_direction = ray.direction.normalize()
         a = 0.5 * (unit_direction.y + 1.0)
         return Vec3(1.0, 1.0, 1.0) * (1.0 - a) + Vec3(0.5, 0.7, 1.0) * a
