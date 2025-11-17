@@ -1,27 +1,53 @@
 import math
 from dataclasses import dataclass
 import numpy as np
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from EasyCells3D.Material import Material
+
+# typedef struct { float x; float y; } Vec2f;
+vec2f_dtype = np.dtype([
+    ("x", np.float32),
+    ("y", np.float32)
+])
+
+# typedef struct { float x; float y; float z; } Vec3f;
+vec3f_dtype = np.dtype([
+    ("x", np.float32),
+    ("y", np.float32),
+    ("z", np.float32)
+])
+
+# typedef struct { float w; float x; float y; float z; } Quaternion;
+quaternion_dtype = np.dtype([
+    ("w", np.float32),
+    ("x", np.float32),
+    ("y", np.float32),
+    ("z", np.float32)
+])
+
+# typedef struct { Vec3f origin; Vec3f direction; } Ray;
+ray_dtype = np.dtype([
+    ("origin", vec3f_dtype),    # 'origin' é do tipo vec3f_dtype
+    ("direction", vec3f_dtype)  # 'direction' é do tipo vec3f_dtype
+])
 
 
 @dataclass
-class Vec2[T]:
-    x: T
-    y: T
+class Vec2:
+    x: float
+    y: float
 
-    def normalize(self) -> 'Vec2[T]':
+    dtype = vec2f_dtype
+
+    def normalize(self) -> 'Vec2':
         mag = self.magnitude()
         if mag == 0:
             return Vec2.zero()
         return Vec2(self.x / mag, self.y / mag)
 
-    def reflect(self, normal: 'Vec2[T]') -> 'Vec2[T]':
+    def reflect(self, normal: 'Vec2') -> 'Vec2':
         return self - normal * 2 * self.dot(normal)
 
-    def dot(self, other: 'Vec2[T]') -> T:
+    def dot(self, other: 'Vec2') -> float:
         return self.x * other.x + self.y * other.y
 
     def __add__(self, other):
@@ -30,10 +56,10 @@ class Vec2[T]:
     def __sub__(self, other):
         return Vec2(self.x - other.x, self.y - other.y)
 
-    def __mul__(self, other: T):
+    def __mul__(self, other: float):
         return Vec2(self.x * other, self.y * other)
 
-    def __truediv__(self, other: T):
+    def __truediv__(self, other: float):
         return Vec2(self.x / other, self.y / other)
 
     def __neg__(self):
@@ -48,49 +74,56 @@ class Vec2[T]:
         return math.atan2(self.y, self.x)
 
     @staticmethod
-    def from_tuple(t: tuple[T, T]) -> 'Vec2[T]':
+    def from_tuple(t: tuple[float, float]) -> 'Vec2':
         return Vec2(t[0], t[1])
 
     @staticmethod
-    def zero() -> 'Vec2[int]':
+    def zero() -> 'Vec2':
         return Vec2(0, 0)
 
     @staticmethod
-    def from_angle(angle: float) -> 'Vec2[float]':
+    def from_angle(angle: float) -> 'Vec2':
         return Vec2(math.cos(angle), math.sin(angle))
 
-    def rotate(self, angle: T) -> 'Vec2[T]':
+    def rotate(self, angle: float) -> 'Vec2':
         return Vec2(
             self.x * math.cos(angle) - self.y * math.sin(angle),
             self.x * math.sin(angle) + self.y * math.cos(angle)
         )
 
-    def distance(self, param: 'Vec2[T]') -> float:
+    def distance(self, param: 'Vec2') -> float:
         return math.sqrt((self.x - param.x) ** 2 + (self.y - param.y) ** 2)
 
     def magnitude(self) -> float:
         return (self.x ** 2 + self.y ** 2) ** 0.5
 
+    def to_numpy(self):
+        return np.array([self.x, self.y], dtype=vec2f_dtype)
+
+
 
 @dataclass
-class Vec3[T]:
-    x: T
-    y: T
-    z: T
+class Vec3:
+    x: float
+    y: float
+    z: float
 
-    def normalize(self) -> 'Vec3[T]':
+    dtype = vec3f_dtype
+
+
+    def normalize(self) -> 'Vec3':
         mag = self.magnitude()
         if mag == 0:
             return Vec3.zero()
         return Vec3(self.x / mag, self.y / mag, self.z / mag)
 
-    def reflect(self, normal: 'Vec3[T]') -> 'Vec3[T]':
+    def reflect(self, normal: 'Vec3') -> 'Vec3':
         return self - normal * 2 * self.dot(normal)
 
-    def dot(self, other: 'Vec3[T]') -> T:
+    def dot(self, other: 'Vec3') -> float:
         return self.x * other.x + self.y * other.y + self.z * other.z
 
-    def cross(self, other: 'Vec3[T]') -> 'Vec3[T]':
+    def cross(self, other: 'Vec3') -> 'Vec3':
         return Vec3(
             self.y * other.z - self.z * other.y,
             self.z * other.x - self.x * other.z,
@@ -103,10 +136,10 @@ class Vec3[T]:
     def __sub__(self, other):
         return Vec3(self.x - other.x, self.y - other.y, self.z - other.z)
 
-    def __mul__(self, other: T):
+    def __mul__(self, other: float):
         return Vec3(self.x * other, self.y * other, self.z * other)
 
-    def __truediv__(self, other: T):
+    def __truediv__(self, other: float):
         return Vec3(self.x / other, self.y / other, self.z / other)
 
     def __neg__(self):
@@ -117,21 +150,21 @@ class Vec3[T]:
         return self.x, self.y, self.z
 
     @staticmethod
-    def from_tuple(t: tuple[T, T, T]) -> 'Vec3[T]':
+    def from_tuple(t: tuple[float, float, float]) -> 'Vec3':
         return Vec3(t[0], t[1], t[2])
 
     @staticmethod
     def zero() -> 'Vec3[int]':
         return Vec3(0, 0, 0)
 
-    def distance(self, param: 'Vec3[T]') -> float:
+    def distance(self, param: 'Vec3') -> float:
         return math.sqrt((self.x - param.x) ** 2 + (self.y - param.y) ** 2 + (self.z - param.z) ** 2)
 
     def magnitude(self) -> float:
         return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
 
-    def to_numpy(self, dtype):
-        return np.array([self.x, self.y, self.z], dtype=dtype)
+    def to_numpy(self):
+        return np.array([self.x, self.y, self.z], dtype=vec3f_dtype)
 
 
 @dataclass
@@ -141,8 +174,11 @@ class Quaternion:
     y: float = 0.0
     z: float = 0.0
 
+    dtype = quaternion_dtype
+
+
     @staticmethod
-    def from_axis_angle(axis: Vec3[float], angle: float) -> 'Quaternion':
+    def from_axis_angle(axis: Vec3, angle: float) -> 'Quaternion':
         """Cria um quaternion a partir de um eixo e um ângulo."""
         axis = axis.normalize()
         half_angle = angle / 2.0
@@ -168,7 +204,7 @@ class Quaternion:
         """Retorna o conjugado do quaternion."""
         return Quaternion(self.w, -self.x, -self.y, -self.z)
 
-    def rotate_vector(self, v: Vec3[float]) -> Vec3[float]:
+    def rotate_vector(self, v: Vec3) -> Vec3:
         """Rotaciona um vetor usando o quaternion."""
         q_v = Quaternion(0, v.x, v.y, v.z)
         q_rotated = self * q_v * self.conjugate()
@@ -185,7 +221,7 @@ class Quaternion:
             return Quaternion()  # Retorna quaternion de identidade
         return Quaternion(self.w / mag, self.x / mag, self.y / mag, self.z / mag)
 
-    def to_euler_angles(self) -> Vec3[float]:
+    def to_euler_angles(self) -> Vec3:
         """Converte o quaternion para ângulos de Euler (roll, pitch, yaw)."""
         # Roll (rotação no eixo x)
         sinr_cosp = 2 * (self.w * self.x + self.y * self.z)
@@ -207,7 +243,7 @@ class Quaternion:
         return Vec3(roll, pitch, yaw)
 
     @staticmethod
-    def from_euler_angles(dir: Vec3[float]) -> 'Quaternion':
+    def from_euler_angles(dir: Vec3) -> 'Quaternion':
         """Cria um quaternion a partir de ângulos de Euler (roll, pitch, yaw)."""
         cy = math.cos(dir.z * 0.5)
         sy = math.sin(dir.z * 0.5)
@@ -224,61 +260,28 @@ class Quaternion:
         )
 
 
-    def to_numpy(self, dtype):
-        return np.array([self.w, self.x, self.y, self.z], dtype=dtype)
+    def to_numpy(self):
+        return np.array([self.w, self.x, self.y, self.z], dtype=quaternion_dtype)
 
     def inverse(self):
         return Quaternion(self.w, -self.x, -self.y, -self.z)
 
 
 @dataclass
-class Color:
-    r: int
-    g: int
-    b: int
-
-    def to_tuple(self) -> tuple[int, int, int]:
-        return self.r, self.g, self.b
-
-    @staticmethod
-    def from_tuple(t: tuple[int, int, int]) -> 'Color':
-        return Color(t[0], t[1], t[2])
-
-    @staticmethod
-    def black() -> 'Color':
-        return Color(0, 0, 0)
-
-    @staticmethod
-    def white() -> 'Color':
-        return Color(255, 255, 255)
-
-    @staticmethod
-    def red() -> 'Color':
-        return Color(255, 0, 0)
-
-    @staticmethod
-    def green() -> 'Color':
-        return Color(0, 255, 0)
-
-    @staticmethod
-    def blue() -> 'Color':
-        return Color(0, 0, 255)
-
-
-@dataclass
 class Ray:
-    origin: Vec3[float]
-    direction: Vec3[float]
+    origin: Vec3
+    direction: Vec3
 
-    def point_at(self, t: float) -> Vec3[float]:
+    dtype = ray_dtype
+
+    def point_at(self, t: float) -> Vec3:
         return self.origin + self.direction * t
+    
+    def to_numpy(self):
+        return np.array([self.origin.to_numpy(), self.direction.to_numpy()], dtype=ray_dtype)
 
 
-@dataclass
-class HitInfo:
-    point: Vec3[float]
-    normal: Vec3[float]
-    distance: float
-    hit: bool
-    uv: Vec2[float] | None = None
-    material: 'Material | None' = None
+class DeviceAllocation:
+    """
+    Typo de dado de memória na GPU.
+    """
