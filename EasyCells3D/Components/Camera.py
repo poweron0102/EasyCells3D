@@ -4,48 +4,25 @@ import pygame as pg
 
 from .Component import Component
 from .. import Game
-from ..Geometry import Vec3, Ray, HitInfo
-from EasyCells3D.CudaRenderer import CudaRenderer
+from ..Geometry import Vec3, Ray
 import pycuda.driver as cuda
+import pycuda.autoinit # importante se não ocorre SIGSEV
+from pycuda.compiler import SourceModule
+
 
 class Hittable(Component):
     cameras: list['Camera']
+    dtype = None
 
-    def __init__(self):
-        self.cameras = []
-        if Camera.instance():
+    def __init__(self, cameras: list['Camera'] = None):
+        self.cameras: list['Camera'] = []
+        if Camera.instance() and cameras is None:
             self.cameras.append(Camera.instance())
+        else:
+            self.cameras = cameras if cameras is not None else []
 
-    def init(self):
-        if Camera.instance():
-            Camera.instance().add_hittable(self)
-
-    def on_destroy(self):
-        for camera in self.cameras:
-            camera.remove_hittable(self)
-        self.on_destroy = lambda: None
-
-    def add_camera(self, camera: 'Camera'):
-        if camera not in self.cameras:
-            camera.add_hittable(self)
-            self.cameras.append(camera)
-
-    def remove_camera(self, camera: 'Camera'):
-        if camera in self.cameras:
-            self.cameras.remove(camera)
-        camera.remove_hittable(self)
-
-    def clear_cameras(self):
-        for camera in self.cameras:
-            camera.remove_hittable(self)
-        self.cameras.clear()
-
-    def remove_main_camera(self):
-        if Camera.instance():
-            self.remove_camera(Camera.instance())
-
-    def intersect(self, ray: Ray) -> HitInfo:
-        raise NotImplementedError("O método de interseção deve ser implementado por subclasses de Hittable.")
+    def to_numpy(self):
+        pass
 
 
 class Camera(Component):
@@ -67,14 +44,12 @@ class Camera(Component):
     def image_height(self) -> int:
         return self.screen.get_height()
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, use_cuda=True, light_direction: Vec3 = None, ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1)):
+    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, light_direction: Vec3 = None, ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1)):
         super().__init__()
         if Game.current_instance not in Camera.instances:
             Camera.instances[Game.current_instance] = self
 
-        self.hittables: list[Hittable] = []
         self._screen = screen
-        self.use_cuda = use_cuda
         self.cuda_renderer = None
 
         self.vfov = vfov
@@ -89,17 +64,6 @@ class Camera(Component):
         self._render_array_np = None
 
     def init(self):
-        if self.use_cuda:
-            # try:
-            #     # A inicialização do PyCUDA é tratada no CudaRenderer
-            #     self.cuda_renderer = CudaRenderer(self.image_width, self.image_height)
-            #     print("Dispositivo CUDA detectado. A renderização será feita na GPU.")
-            # except Exception as e:
-            #     print(f"Erro ao inicializar o PyCUDA: {e}")
-            #     print("A renderizar na CPU.")
-            #     self.use_cuda = False
-
-            self.cuda_renderer = CudaRenderer(self.image_width, self.image_height)
             print("Dispositivo CUDA detectado. A renderização será feita na GPU.")
 
     def on_destroy(self):
