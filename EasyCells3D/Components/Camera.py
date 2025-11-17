@@ -1,4 +1,6 @@
 import math
+from pathlib import Path
+
 import numpy as np
 import pygame as pg
 
@@ -8,6 +10,28 @@ from ..Geometry import Vec3, Ray
 import pycuda.driver as cuda
 import pycuda.autoinit # importante se não ocorre SIGSEV
 from pycuda.compiler import SourceModule
+
+def LoadKernel(file: str, options: list[str] = None) -> SourceModule:
+    """
+    Carrega e compila um kernel CUDA a partir do caminho 'file'.
+    Retorna um objeto pycuda.compiler.SourceModule.
+    """
+    path = Path(file)
+    if not path.exists():
+        raise FileNotFoundError(f"Kernel file not found: {path}")
+
+    src = path.read_text(encoding='utf-8')
+
+    # opções padrão para compilação podem ser sobrescritas pelo caller
+    compile_options = options if options is not None else ['-use_fast_math']
+
+    try:
+        module = SourceModule(src, options=compile_options)
+        return module
+    except Exception as e:
+        # inclui o conteúdo do arquivo no erro pode ser verboso; aqui apenas repassa mensagem
+        raise RuntimeError(f"Falha ao compilar o kernel CUDA '{path}': {e}")
+
 
 
 class Hittable(Component):
@@ -44,40 +68,35 @@ class Camera(Component):
     def image_height(self) -> int:
         return self.screen.get_height()
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, light_direction: Vec3 = None, ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1)):
+    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, light_direction: Vec3 = Vec3(0.0, 1.0, -1.0), ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1)):
         super().__init__()
         if Game.current_instance not in Camera.instances:
             Camera.instances[Game.current_instance] = self
 
         self._screen = screen
-        self.cuda_renderer = None
+
+        self.kernel = LoadKernel("render_kernel.cu")
 
         self.vfov = vfov
         self.center = Vec3(0.0, 0.0, 0.0)
         self.ambient_light = ambient_light
-        self.light_direction = light_direction.normalize() if light_direction else Vec3(0.0, 1.0, -1.0).normalize()
+        self.light_direction = light_direction.normalize()
 
         self.pixel00_loc = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_u = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_v = Vec3(0.0, 0.0, 0.0)
 
         self._render_array_np = None
+        self._render_array_device = None
 
     def init(self):
-            print("Dispositivo CUDA detectado. A renderização será feita na GPU.")
+        self._render_array_np = pg.surfarray.pixels3d(self.screen)
+        self._render_array_device = cuda.mem_alloc_like(self._render_array_np)
 
     def on_destroy(self):
         if Game.current_instance in Camera.instances and Camera.instances[Game.current_instance] == self:
-            del Camera.instances[Game.current_instance]
+            Camera.instances.pop(Game.current_instance)
         self.on_destroy = lambda: None
-
-    def add_hittable(self, hittable: Hittable):
-        if hittable not in self.hittables:
-            self.hittables.append(hittable)
-
-    def remove_hittable(self, hittable: Hittable):
-        if hittable in self.hittables:
-            self.hittables.remove(hittable)
 
     def _update_camera_geometry(self):
         self.center = self.transform.Global.position
@@ -104,77 +123,13 @@ class Camera(Component):
         viewport_upper_left = self.center - (w * focal_length) - viewport_u / 2 - viewport_v / 2
         self.pixel00_loc = viewport_upper_left + (self.pixel_delta_u + self.pixel_delta_v) * 0.5
 
-        if self._render_array_np is None or self._render_array_np.shape[1] != self.image_width or \
-                self._render_array_np.shape[0] != self.image_height:
-            self._render_array_np = np.zeros((self.image_height, self.image_width, 3), dtype=np.uint8)
-            if self.use_cuda and self.cuda_renderer:
-                self.cuda_renderer.width = self.image_width
-                self.cuda_renderer.height = self.image_height
+        if self._render_array_np.shap() != (self.image_height, self.image_width, 3):
+            self._render_array_np = pg.surfarray.pixels3d(self.screen)
+            self._render_array_device = cuda.mem_alloc_like(self._render_array_np)
 
     def loop(self):
         self._update_camera_geometry()
 
-        if self.use_cuda and self.cuda_renderer:
-            self._render_cuda()
-        else:
-            self._render_cpu()
+    def render_cuda(self):
+        pass
 
-        pg.surfarray.blit_array(self.screen, np.transpose(self._render_array_np, (1, 0, 2)))
-
-    def _render_cuda(self):
-        # A cena é composta pelos hittables adicionados à câmara
-        scene = self.game.scene
-        self._render_array_np = self.cuda_renderer.render(self, scene, self.light_direction, self.ambient_light)
-
-    def _render_cpu(self):
-        render_array = np.transpose(self._render_array_np, (1, 0, 2))
-        for j in range(self.image_height):
-            for i in range(self.image_width):
-                ray = self._get_ray(i, j)
-                color_vec = self._ray_color(ray)
-
-                r = int(255.999 * np.clip(color_vec.x, 0, 1))
-                g = int(255.999 * np.clip(color_vec.y, 0, 1))
-                b = int(255.999 * np.clip(color_vec.z, 0, 1))
-
-                render_array[i, j] = (r, g, b)
-
-    def _get_ray(self, i: int, j: int) -> Ray:
-        pixel_center = self.pixel00_loc + (self.pixel_delta_u * i) + (self.pixel_delta_v * j)
-        ray_direction = (pixel_center - self.center).normalize()
-        return Ray(self.center, ray_direction)
-
-    def _ray_color(self, ray: Ray) -> Vec3[float]:
-        closest_hit: HitInfo | None = None
-        closest_hittable: Hittable | None = None
-        min_dist = float('inf')
-
-        for hittable in self.hittables:
-            if hittable.enable:
-                hit_info = hittable.intersect(ray)
-                if hit_info and hit_info.hit and 0.001 < hit_info.distance < min_dist:
-                    min_dist = hit_info.distance
-                    closest_hit = hit_info
-                    closest_hittable = hittable
-
-        if closest_hit:
-            if hasattr(closest_hittable, 'material') and closest_hit.uv is not None:
-                material = closest_hittable.material
-                albedo = material.get_color_at(closest_hit.uv.x, closest_hit.uv.y)
-                emissive = material.emissive_color
-                light_dir = self.light_direction
-                diffuse_intensity = max(0.0, closest_hit.normal.dot(light_dir))
-                diffuse = albedo * diffuse_intensity
-                view_dir = (ray.origin - closest_hit.point).normalize()
-                half_vector = (light_dir + view_dir).normalize()
-                specular_intensity = pow(max(0.0, closest_hit.normal.dot(half_vector)), material.shininess)
-                specular = Vec3(1.0, 1.0, 1.0) * material.specular * specular_intensity
-                final_color = emissive + diffuse + specular
-                return final_color
-            else:
-                n = closest_hit.normal
-                return Vec3(n.x + 1, n.y + 1, n.z + 1) * 0.5
-
-        unit_direction = ray.direction.normalize()
-        a = 0.5 * (unit_direction.y + 1.0)
-        return Vec3(1.0, 1.0, 1.0) * (1.0 - a) + Vec3(0.5, 0.7, 1.0) * a
