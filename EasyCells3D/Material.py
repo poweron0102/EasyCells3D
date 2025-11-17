@@ -14,6 +14,8 @@ texture_dtype = np.dtype([
 class Texture:
     LoadedTextures: dict[str, tuple[int, DeviceAllocation, int, int, int]] = {}
     TextureList: list[str] = []
+    _all_textures_np: np.ndarray | None = None
+    _is_np_array_valid: bool = False
 
     dtype = texture_dtype
 
@@ -37,6 +39,7 @@ class Texture:
                 self.index = len(Texture.TextureList)
                 Texture.TextureList.append(texture_path)
                 Texture.LoadedTextures[texture_path] = (1, self.data, self.width, self.height, self.index)
+                Texture._is_np_array_valid = False # Invalida o cache
 
             except pg.error as e:
                 print(f"Erro ao carregar a textura: {full_texture_path} - {e}")
@@ -51,11 +54,16 @@ class Texture:
             if cont > 1:
                 Texture.LoadedTextures[self.texture_path] = (cont - 1, data, width, height, index)
             else:
-                # A remoção da lista e a reorganização dos índices é complexa
-                # e pode não ser necessária se as texturas persistirem durante a vida útil do aplicativo.
-                # Por simplicidade, apenas removemos do dicionário.
-                # todo
+                # Remove a textura do dicionário e da lista
                 Texture.LoadedTextures.pop(self.texture_path)
+                Texture.TextureList.pop(index)
+
+                # Atualiza os índices das texturas subsequentes na lista
+                for i in range(index, len(Texture.TextureList)):
+                    path = Texture.TextureList[i]
+                    _cont, _data, _width, _height, _ = Texture.LoadedTextures[path]
+                    Texture.LoadedTextures[path] = (_cont, _data, _width, _height, i)
+                Texture._is_np_array_valid = False # Invalida o cache
 
     def to_numpy(self) -> np.ndarray:
         """Converte os dados da textura para um array estruturado numpy."""
@@ -64,11 +72,17 @@ class Texture:
     @staticmethod
     def get_all_textures_as_numpy_array() -> np.ndarray:
         """Retorna um array numpy de todas as texturas carregadas."""
+        if Texture._is_np_array_valid and Texture._all_textures_np is not None:
+            return Texture._all_textures_np
+
         all_textures = np.empty(len(Texture.TextureList), dtype=texture_dtype)
         for path in Texture.TextureList:
             _, data, width, height, index = Texture.LoadedTextures[path]
             all_textures[index] = (data, width, height)
-        return all_textures
+
+        Texture._all_textures_np = all_textures
+        Texture._is_np_array_valid = True
+        return Texture._all_textures_np
 
 
 material_dtype = np.dtype([
@@ -84,6 +98,8 @@ class Material:
     """
     Representa as propriedades do material de um objeto.
     """
+    
+    dtype = material_dtype
 
     def __init__(self,
                  texture_path: str = None,
