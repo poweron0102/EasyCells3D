@@ -15,11 +15,16 @@ sphere_dtype = np.dtype([
 
 class SphereHittable(Hittable):
     word_position: Transform
+    dtype = sphere_dtype
+
+    instances: list['SphereHittable'] = []
 
     def __init__(self, radius: float = 0.5, material: Material = None):
         super().__init__()
         self.radius = radius
         self.material = material if material is not None else Material()
+        SphereHittable.instances.append(self)
+
 
     def init(self):
         super().init()
@@ -27,6 +32,11 @@ class SphereHittable(Hittable):
 
     def loop(self):
         self.word_position = Transform.Global
+
+    def on_destroy(self):
+        SphereHittable.instances.remove(self)
+        self.on_destroy = lambda: None
+
 
     def to_numpy(self):
         return np.array([

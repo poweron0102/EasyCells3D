@@ -29,7 +29,7 @@ def init(game: Game):
     # --- Câmera e Controles ---
     camera = game.CreateItem()
     # A luz ambiente é baixa para que o Sol seja a principal fonte de luz.
-    camera.AddComponent(Camera(vfov=60, use_cuda=True, ambient_light=Vec3(0.05, 0.05, 0.05)))
+    camera.AddComponent(Camera(vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05)))
     # Posição inicial da câmera ajustada para ver todo o sistema
     camera.transform.position = Vec3(0, 15, -40)
     camera.transform.forward = Vec3(0, 0, 1)

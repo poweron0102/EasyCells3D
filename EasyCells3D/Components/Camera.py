@@ -5,11 +5,15 @@ import numpy as np
 import pygame as pg
 
 from .Component import Component
+from .SphereHittable import SphereHittable
 from .. import Game
 from ..Geometry import Vec3, Ray
 import pycuda.driver as cuda
 import pycuda.autoinit # importante se não ocorre SIGSEV
 from pycuda.compiler import SourceModule
+
+from ..Material import Texture
+
 
 def LoadKernel(file: str, options: list[str] = None) -> SourceModule:
     """
@@ -68,15 +72,24 @@ class Camera(Component):
     def image_height(self) -> int:
         return self.screen.get_height()
 
-    def __init__(self, screen: pg.Surface = None, vfov: float = 90.0, light_direction: Vec3 = Vec3(0.0, 1.0, -1.0), ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1)):
+    def __init__(
+            self,
+            sky_box: Texture,
+            screen: pg.Surface = None,
+            vfov: float = 90.0,
+            light_direction: Vec3 = Vec3(0.0, 1.0, -1.0),
+            ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1),
+    ):
         super().__init__()
         if Game.current_instance not in Camera.instances:
             Camera.instances[Game.current_instance] = self
 
         self._screen = screen
 
-        self.kernel = LoadKernel("render_kernel.cu")
+        self.kernel_module = LoadKernel("render_kernel.cu")
+        self.kernel = self.kernel_module.get_function("kernel")
 
+        self.sky_box = sky_box
         self.vfov = vfov
         self.center = Vec3(0.0, 0.0, 0.0)
         self.ambient_light = ambient_light
@@ -98,7 +111,7 @@ class Camera(Component):
             Camera.instances.pop(Game.current_instance)
         self.on_destroy = lambda: None
 
-    def _update_camera_geometry(self):
+    def update_camera_geometry(self):
         self.center = self.transform.Global.position
 
         focal_length = 1.0
@@ -128,8 +141,35 @@ class Camera(Component):
             self._render_array_device = cuda.mem_alloc_like(self._render_array_np)
 
     def loop(self):
-        self._update_camera_geometry()
+        self.update_camera_geometry()
+
+
+
 
     def render_cuda(self):
-        pass
+        """
+        Renderiza a cena usando o kernel CUDA.
+        """
+        _, textures_gpu = Texture.get_all_textures_as_numpy_array()
 
+        spheres = [sphere for sphere in SphereHittable.instances if self in sphere.cameras]
+        num_spheres = np.int32(len(spheres))
+        spheres_np = np.array([sphere.to_numpy() for sphere in spheres], dtype=SphereHittable.dtype)
+
+        camera_center = self.center.to_numpy()
+        pixel00_loc = self.pixel00_loc.to_numpy()
+        pixel_delta_u = self.pixel_delta_u.to_numpy()
+        pixel_delta_v = self.pixel_delta_v.to_numpy()
+        width, height, _ = self._render_array_device.shape()
+        sky_box_index = self.sky_box.index
+        light_direction = self.light_direction.to_numpy()
+        ambient_light = self.ambient_light.to_numpy()
+
+        # 3. Lançar o kernel
+        block_size = (16, 16, 1)
+        grid_size = (
+            (width + block_size[0] - 1) // block_size[0],
+            (height + block_size[1] - 1) // block_size[1]
+        )
+
+        self.kernel(

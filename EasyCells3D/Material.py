@@ -12,77 +12,91 @@ texture_dtype = np.dtype([
 
 
 class Texture:
-    LoadedTextures: dict[str, tuple[int, DeviceAllocation, int, int, int]] = {}
-    TextureList: list[str] = []
+    _loaded_textures: dict[str, 'Texture'] = {}
+    _texture_list: list['Texture'] = []
     _all_textures_np: np.ndarray | None = None
+    _all_textures_gpu: DeviceAllocation | None = None
     _is_np_array_valid: bool = False
 
     dtype = texture_dtype
 
-    def __init__(self, texture_path: str):
-
+    # O construtor não deve ser chamado diretamente, use Texture.get()
+    def __init__(self, texture_path: str, _private_constructor_token=None):
+        if _private_constructor_token is None:
+            raise RuntimeError("Use Texture.get(texture_path) para criar ou obter uma textura.")
+        
         self.texture_path = texture_path
+        full_texture_path = "Assets/" + texture_path
+        try:
+            # Carrega a imagem para a CPU e GPU
+            surface = pg.image.load(full_texture_path).convert_alpha()
 
-        if texture_path in Texture.LoadedTextures:
-            cont, self.data, self.width, self.height, self.index = Texture.LoadedTextures[texture_path]
-            Texture.LoadedTextures[texture_path] = (cont + 1, self.data, self.width, self.height, self.index)
+            texture_data = pg.surfarray.pixels3d(surface)
+            self.width, self.height, _ = texture_data.shape
+            self.data = cuda.to_device(texture_data)
+
+            self.index = len(Texture._texture_list)
+            Texture._texture_list.append(self)
+            Texture._is_np_array_valid = False  # Invalida o cache
+
+        except pg.error as e:
+            print(f"Erro ao carregar a textura: {full_texture_path} - {e}")
+            self.data = None
+            self.width = 0
+            self.height = 0
+            self.index = -1  # Indica uma textura inválida
+
+    @staticmethod
+    def get(texture_path: str) -> 'Texture':
+        """
+        Obtém uma instância de textura. Se a textura já foi carregada,
+        retorna a instância existente. Caso contrário, cria uma nova.
+        """
+        if texture_path in Texture._loaded_textures:
+            return Texture._loaded_textures[texture_path]
         else:
-            full_texture_path = "Assets/" + texture_path
-            try:
-                # Carrega a imagem para a CPU e GPU
-                surface = pg.image.load(full_texture_path).convert_alpha()
-
-                texture_data = pg.surfarray.pixels3d(surface)
-                self.width, self.height, _ = texture_data.shape
-                self.data = cuda.to_device(texture_data)
-
-                self.index = len(Texture.TextureList)
-                Texture.TextureList.append(texture_path)
-                Texture.LoadedTextures[texture_path] = (1, self.data, self.width, self.height, self.index)
-                Texture._is_np_array_valid = False # Invalida o cache
-
-            except pg.error as e:
-                print(f"Erro ao carregar a textura: {full_texture_path} - {e}")
-                self.data = None
-                self.width = 0
-                self.height = 0
-                self.index = -1 # Indica uma textura inválida
+            new_texture = Texture(texture_path, _private_constructor_token=object())
+            Texture._loaded_textures[texture_path] = new_texture
+            return new_texture
 
     def __del__(self):
-        if self.texture_path in Texture.LoadedTextures:
-            cont, data, width, height, index = Texture.LoadedTextures[self.texture_path]
-            if cont > 1:
-                Texture.LoadedTextures[self.texture_path] = (cont - 1, data, width, height, index)
-            else:
-                # Remove a textura do dicionário e da lista
-                Texture.LoadedTextures.pop(self.texture_path)
-                Texture.TextureList.pop(index)
+        # Chamado quando a contagem de referências do objeto chega a 0
+        if self.texture_path in Texture._loaded_textures:
+            Texture._loaded_textures.pop(self.texture_path, None)
+            if self in Texture._texture_list:
+                # Atualiza os índices das texturas subsequentes
+                removed_index = self.index
+                Texture._texture_list.pop(removed_index)
+                for i in range(removed_index, len(Texture._texture_list)):
+                    Texture._texture_list[i].index = i
 
-                # Atualiza os índices das texturas subsequentes na lista
-                for i in range(index, len(Texture.TextureList)):
-                    path = Texture.TextureList[i]
-                    _cont, _data, _width, _height, _ = Texture.LoadedTextures[path]
-                    Texture.LoadedTextures[path] = (_cont, _data, _width, _height, i)
-                Texture._is_np_array_valid = False # Invalida o cache
+            if self.data:
+                self.data.free()
+
+            Texture._is_np_array_valid = False  # Invalida o cache
 
     def to_numpy(self) -> np.ndarray:
         """Converte os dados da textura para um array estruturado numpy."""
         return np.array([(self.data, self.width, self.height)], dtype=texture_dtype)
 
     @staticmethod
-    def get_all_textures_as_numpy_array() -> np.ndarray:
-        """Retorna um array numpy de todas as texturas carregadas."""
+    def get_all_textures_as_numpy_array() -> tuple[np.ndarray, DeviceAllocation]:
+        """
+        Retorna um array numpy de todas as texturas carregadas.
+        E um ponteiro delas na GPU.
+        """
         if Texture._is_np_array_valid and Texture._all_textures_np is not None:
-            return Texture._all_textures_np
+            return Texture._all_textures_np, Texture._all_textures_gpu
 
-        all_textures = np.empty(len(Texture.TextureList), dtype=texture_dtype)
-        for path in Texture.TextureList:
-            _, data, width, height, index = Texture.LoadedTextures[path]
-            all_textures[index] = (data, width, height)
-
+        all_textures = np.empty(len(Texture._texture_list), dtype=texture_dtype)
+        for texture_instance in Texture._texture_list:
+            all_textures[texture_instance.index] = texture_instance.to_numpy()
+        
         Texture._all_textures_np = all_textures
+        Texture._all_textures_gpu = cuda.to_device(all_textures)
         Texture._is_np_array_valid = True
-        return Texture._all_textures_np
+        
+        return Texture._all_textures_np, Texture._all_textures_gpu
 
 
 material_dtype = np.dtype([
@@ -116,7 +130,7 @@ class Material:
         :param shininess: O quão concentrado é o brilho especular.
         :param emissive_color: A cor que o material emite (luz própria).
         """
-        self.texture = Texture(texture_path)
+        self.texture = Texture.get(texture_path) if texture_path else None
 
         self.diffuse_color = diffuse_color
         self.specular = specular
