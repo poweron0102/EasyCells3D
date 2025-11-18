@@ -35,10 +35,6 @@ def init(game: Game):
     camera.transform.forward = Vec3(0, 0, 1)
     camera.AddComponent(FreeCam())
 
-    # Centraliza e oculta o cursor do mouse para melhor controle da câmera
-    pg.mouse.set_visible(False)
-    pg.event.set_grab(True)
-
     # --- Criação dos Corpos Celestes ---
 
     # 1. Sol

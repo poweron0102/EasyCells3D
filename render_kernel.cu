@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 
 
 
@@ -339,12 +340,16 @@ extern "C" __global__ void kernel(
     Vec3f light_direction,
     Vec3f ambient_light
 ) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int j = blockIdx.y * blockDim.y + threadIdx.y;
+    // Mapeia i para X (Largura) e j para Y (Altura)
+    int i = blockIdx.x * blockDim.x + threadIdx.x; // Coordenada X
+    int j = blockIdx.y * blockDim.y + threadIdx.y; // Coordenada Y
 
+    // Proteção de limites
     if (i >= image_width || j >= image_height) {
         return;
     }
+
+    int pixel_index = (i * image_height + j) * 3;
 
     Vec3f color = per_pixel(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,
                             spheres, num_spheres, textures, sky_box_index, light_direction, ambient_light);
@@ -354,13 +359,8 @@ extern "C" __global__ void kernel(
     color.y = fmaxf(0.0f, fminf(1.0f, color.y));
     color.z = fmaxf(0.0f, fminf(1.0f, color.z));
 
-    int pixel_index = (j * image_width + i) * 3;
-     
+    // Escreve a cor no buffer de saída
     output_image[pixel_index + 0] = (unsigned char)(255.999 * color.x);
     output_image[pixel_index + 1] = (unsigned char)(255.999 * color.y);
     output_image[pixel_index + 2] = (unsigned char)(255.999 * color.z);
-
-//     output_image[pixel_index + 0] = 255;
-//     output_image[pixel_index + 1] = 0;
-//     output_image[pixel_index + 2] = 0;
 }
