@@ -203,18 +203,32 @@ __device__ Vec3f texture_sample(const Texture* tex, Vec2f uv) {
     if (uv.x < 0.0f) uv.x += 1.0f;
     if (uv.y < 0.0f) uv.y += 1.0f;
 
+    // Mapeamento UV padrão
     int i = (int)(uv.x * tex->width);
-    int j = (int)((1.0f - uv.y) * tex->height); // Pygame e muitas libs de imagem têm (0,0) no topo-esquerdo
+    int j = (int)((1.0f - uv.y) * tex->height);
 
-    // Clamping para evitar acesso fora dos limites
+    // Clamping
     i = max(0, min((int)tex->width - 1, i));
     j = max(0, min((int)tex->height - 1, j));
 
-    // A imagem é RGBA, 4 bytes por pixel
-    unsigned char* pixel = tex->data_ptr + (j * tex->width + i) * 4;
+    // --- CORREÇÃO 1: INDEXAÇÃO (Pygame Style) ---
+    // Padrão C: j * width + i  (Linha por linha)
+    // Pygame:   i * height + j (Coluna por coluna)
+    int pixel_index = (i * tex->height + j);
+
+    // --- CORREÇÃO 2: NÚMERO DE CANAIS ---
+    // Se sua textura vem de pg.surfarray.pixels3d, ela tem 3 bytes (RGB).
+    // Se o código original usava * 4, ele leria memória errada (RGBA).
+    // Ajuste aqui conforme sua textura (3 para RGB, 4 para RGBA).
+
+    int channels = 3; // Mude para 4 se estiver usando pixels_alpha ou imagens convertidas para RGBA
+    unsigned char* pixel = tex->data_ptr + pixel_index * channels;
+
     float r = pixel[0] / 255.0f;
     float g = pixel[1] / 255.0f;
     float b = pixel[2] / 255.0f;
+
+    // Se for RGBA, o pixel[3] seria o alpha
 
     return {r, g, b};
 }
