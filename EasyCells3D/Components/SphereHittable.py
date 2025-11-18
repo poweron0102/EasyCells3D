@@ -39,10 +39,10 @@ class SphereHittable(Hittable):
 
 
     def to_numpy(self):
-        return np.array([
+        return np.array((
             self.radius,
             self.material.to_numpy(),
             self.word_position.position.to_numpy(),
             self.word_position.rotation.to_numpy(),
             self.word_position.scale.to_numpy()
-        ], dtype=sphere_dtype)
+        ), dtype=sphere_dtype)

@@ -140,8 +140,10 @@ class Material:
     def to_numpy(self) -> np.ndarray:
         """Converte as propriedades do material para um array estruturado numpy."""
         texture_index = self.texture.index if self.texture and self.texture.data is not None else -1
-        return np.array([(texture_index,
-                          self.diffuse_color.to_tuple(),
-                          self.specular,
-                          self.shininess,
-                          self.emissive_color.to_tuple())], dtype=material_dtype)
+        return np.array(
+            (texture_index,
+                self.diffuse_color.to_tuple,
+                self.specular,
+                self.shininess,
+                self.emissive_color.to_tuple),
+            dtype=material_dtype)

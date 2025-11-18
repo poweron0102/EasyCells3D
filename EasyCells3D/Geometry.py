@@ -98,7 +98,7 @@ class Vec2:
         return (self.x ** 2 + self.y ** 2) ** 0.5
 
     def to_numpy(self):
-        return np.array([self.x, self.y], dtype=vec2f_dtype)
+        return np.array((self.x, self.y), dtype=vec2f_dtype)
 
 
 
@@ -164,7 +164,7 @@ class Vec3:
         return (self.x ** 2 + self.y ** 2 + self.z ** 2) ** 0.5
 
     def to_numpy(self):
-        return np.array([self.x, self.y, self.z], dtype=vec3f_dtype)
+        return np.array((self.x, self.y, self.z), dtype=vec3f_dtype)
 
 
 @dataclass
@@ -261,7 +261,7 @@ class Quaternion:
 
 
     def to_numpy(self):
-        return np.array([self.w, self.x, self.y, self.z], dtype=quaternion_dtype)
+        return np.array((self.w, self.x, self.y, self.z), dtype=quaternion_dtype)
 
     def inverse(self):
         return Quaternion(self.w, -self.x, -self.y, -self.z)
@@ -278,7 +278,7 @@ class Ray:
         return self.origin + self.direction * t
     
     def to_numpy(self):
-        return np.array([self.origin.to_numpy(), self.direction.to_numpy()], dtype=ray_dtype)
+        return np.array((self.origin.to_numpy(), self.direction.to_numpy()), dtype=ray_dtype)
 
 
 class DeviceAllocation:

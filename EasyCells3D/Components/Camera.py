@@ -4,15 +4,18 @@ from pathlib import Path
 import numpy as np
 import pygame as pg
 
-from .Component import Component
-from .SphereHittable import SphereHittable
-from .. import Game
-from ..Geometry import Vec3, Ray
+from EasyCells3D.Components import Component
+from EasyCells3D import Game
+from EasyCells3D.Geometry import Vec3
 import pycuda.driver as cuda
 import pycuda.autoinit # importante se não ocorre SIGSEV
 from pycuda.compiler import SourceModule
 
 from ..Material import Texture
+
+
+
+SphereHittable: type
 
 
 def LoadKernel(file: str, options: list[str] = None) -> SourceModule:
@@ -84,6 +87,11 @@ class Camera(Component):
         if Game.current_instance not in Camera.instances:
             Camera.instances[Game.current_instance] = self
 
+        from EasyCells3D.Components.SphereHittable import SphereHittable as sh
+
+        global SphereHittable
+        SphereHittable = sh
+
         self._screen = screen
 
         self.kernel_module = LoadKernel("render_kernel.cu")
@@ -103,7 +111,7 @@ class Camera(Component):
         self._render_array_device = None
 
     def init(self):
-        self._render_array_np = pg.surfarray.pixels3d(self.screen)
+        self._render_array_np = np.ascontiguousarray(pg.surfarray.pixels3d(self.screen))
         self._render_array_device = cuda.mem_alloc_like(self._render_array_np)
 
     def on_destroy(self):
@@ -136,14 +144,13 @@ class Camera(Component):
         viewport_upper_left = self.center - (w * focal_length) - viewport_u / 2 - viewport_v / 2
         self.pixel00_loc = viewport_upper_left + (self.pixel_delta_u + self.pixel_delta_v) * 0.5
 
-        if self._render_array_np.shap() != (self.image_height, self.image_width, 3):
-            self._render_array_np = pg.surfarray.pixels3d(self.screen)
+        if self._render_array_np.shape != (self.image_height, self.image_width, 3):
+            self._render_array_np = np.ascontiguousarray(pg.surfarray.pixels3d(self.screen))
             self._render_array_device = cuda.mem_alloc_like(self._render_array_np)
 
     def loop(self):
         self.update_camera_geometry()
-
-
+        self.render_cuda()
 
 
     def render_cuda(self):
@@ -155,12 +162,13 @@ class Camera(Component):
         spheres = [sphere for sphere in SphereHittable.instances if self in sphere.cameras]
         num_spheres = np.int32(len(spheres))
         spheres_np = np.array([sphere.to_numpy() for sphere in spheres], dtype=SphereHittable.dtype)
+        spheres_gpu = cuda.to_device(spheres_np)
 
         camera_center = self.center.to_numpy()
         pixel00_loc = self.pixel00_loc.to_numpy()
         pixel_delta_u = self.pixel_delta_u.to_numpy()
         pixel_delta_v = self.pixel_delta_v.to_numpy()
-        width, height, _ = self._render_array_device.shape()
+        width, height, _ = self._render_array_np.shape
         sky_box_index = self.sky_box.index
         light_direction = self.light_direction.to_numpy()
         ambient_light = self.ambient_light.to_numpy()
@@ -173,3 +181,22 @@ class Camera(Component):
         )
 
         self.kernel(
+            self._render_array_device,
+            np.int32(width),
+            np.int32(height),
+            camera_center,
+            pixel00_loc,
+            pixel_delta_u,
+            pixel_delta_v,
+            spheres_gpu,
+            num_spheres,
+            textures_gpu,
+            np.int32(sky_box_index),
+            light_direction,
+            ambient_light,
+            block=block_size,
+            grid=grid_size
+        )
+
+        cuda.memcpy_dtoh(self._render_array_np, self._render_array_device)
+        pg.surfarray.blit_array(self.screen, self._render_array_np)

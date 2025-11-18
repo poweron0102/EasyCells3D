@@ -15,7 +15,7 @@ Dependencies:
 from EasyCells3D import Game
 import pygame as pg
 
-import Levels.test
+#import Levels.test
 import Levels.solar
 
 if __name__ == '__main__':

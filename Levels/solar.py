@@ -4,8 +4,8 @@ from EasyCells3D import Game
 from EasyCells3D.Components import Camera, Item
 from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
-from EasyCells3D.Geometry import Vec3, Quaternion
-from EasyCells3D.Material import Material
+from EasyCells3D.Geometry import Vec3
+from EasyCells3D.Material import Material, Texture
 from UserComponents.ratating_obj import RotatingObj
 
 
@@ -29,8 +29,8 @@ def init(game: Game):
     # --- Câmera e Controles ---
     camera = game.CreateItem()
     # A luz ambiente é baixa para que o Sol seja a principal fonte de luz.
-    camera.AddComponent(Camera(vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05)))
-    # Posição inicial da câmera ajustada para ver todo o sistema
+    camera.AddComponent(Camera(sky_box=Texture.get("Texture/redstone_lamp_on.png"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05)))
+
     camera.transform.position = Vec3(0, 15, -40)
     camera.transform.forward = Vec3(0, 0, 1)
     camera.AddComponent(FreeCam())
