@@ -17,6 +17,7 @@ from ..Material import Texture
 
 
 SphereHittable: type
+VoxelsHittable: type
 
 
 def LoadKernel(file: str, options: list[str] = None) -> SourceModule:
@@ -95,9 +96,12 @@ class Camera(Component):
             Camera.instances[Game.current_instance] = self
 
         from EasyCells3D.Components.SphereHittable import SphereHittable as sh
+        from EasyCells3D.Components.VoxelsHittable import VoxelsHittable as vh
 
         global SphereHittable
+        global VoxelsHittable
         SphereHittable = sh
+        VoxelsHittable = vh
 
         self._screen = screen
 
@@ -169,7 +173,12 @@ class Camera(Component):
         spheres = [sphere for sphere in SphereHittable.instances if self in sphere.cameras]
         num_spheres = np.int32(len(spheres))
         spheres_np = np.array([sphere.to_numpy() for sphere in spheres], dtype=SphereHittable.dtype)
-        spheres_gpu = cuda.to_device(spheres_np)
+        spheres_gpu = cuda.to_device(spheres_np)  if len(spheres_np) > 0 else np.uintp(0)
+
+        voxels = [voxel for voxel in VoxelsHittable.instances if self in voxel.cameras]
+        num_voxels = np.int32(len(voxels))
+        voxels_np = np.array([voxel.to_numpy() for voxel in voxels], dtype=VoxelsHittable.dtype)
+        voxels_gpu = cuda.to_device(voxels_np) if len(voxels_np) > 0 else np.uintp(0)
 
         camera_center = self.center.to_numpy()
         pixel00_loc = self.pixel00_loc.to_numpy()
@@ -197,6 +206,8 @@ class Camera(Component):
             pixel_delta_v,
             spheres_gpu,
             num_spheres,
+            voxels_gpu,
+            num_voxels,
             textures_gpu,
             np.int32(sky_box_index),
             light_direction,

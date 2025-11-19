@@ -100,7 +100,7 @@ class Texture:
 
 
 material_dtype = np.dtype([
-    ("texture_index", np.uint32),
+    ("texture_index", np.int32),
     ("diffuse_color", Vec3.dtype),
     ("specular", np.float32),
     ("shininess", np.float32),

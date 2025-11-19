@@ -19,7 +19,7 @@ typedef struct {
 } Texture;
 
 typedef struct {
-    unsigned int texture_index;
+    int texture_index;
     Vec3f diffuse_color;
     float specular;
     float shininess;

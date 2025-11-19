@@ -1,7 +1,6 @@
 import numpy as np
-import midvoxio.voxio as voxio
+from midvoxio.voxio import vox_to_arr
 import pycuda.driver as cuda
-from midvoxio.vox import Vox
 
 from EasyCells3D.Components import Transform
 from EasyCells3D.Components.Camera import Hittable
@@ -31,7 +30,8 @@ class VoxelsHittable(Hittable):
         # Carrega o arquivo .vox
         full_vox_path = "Assets/" + vox_file_name
         try:
-            vox_model: Vox = voxio.Vox.from_file(full_vox_path)
+            # vox_to_arr retorna um array (x, y, z, 4) com cores RGBA normalizadas (0-1)
+            voxels_rgba = vox_to_arr(full_vox_path)
         except FileNotFoundError:
             print(f"Erro: Arquivo .vox não encontrado em: {full_vox_path}")
             self.voxels_data = None
@@ -39,20 +39,29 @@ class VoxelsHittable(Hittable):
             self.voxels_gpu = None
             return
         
-        # Converte a paleta de cores para materiais
+        # Extrai a paleta de cores únicas a partir dos dados dos voxels (ignorando voxels vazios)
+        # e converte para materiais. As cores em voxels_rgba já estão normalizadas (0-1).
+        all_colors = voxels_rgba.reshape(-1, 4)
+        non_empty_mask = all_colors[:, 3] > 0
+        palette_normalized = np.unique(all_colors[non_empty_mask], axis=0)
+        
         self.materials: list[Material] = []
-        for color in vox_model.palette:
-            r, g, b, _ = color
-            diffuse_color = Vec3(r / 255.0, g / 255.0, b / 255.0)
+        for r, g, b, a in palette_normalized:
+            diffuse_color = Vec3(r, g, b)
             self.materials.append(Material(diffuse_color=diffuse_color))
-        
-        # Prepara os dados dos voxels com índices de material
-        # O índice 0 no arquivo .vox significa vazio, então o ajustamos para -1
-        self.voxels_data = (vox_model.models[0] - 1).astype(np.int32)
-        
+
+        # Encontra o índice do material para cada voxel
+        # A cor (0,0,0,0) representa um voxel vazio, que terá índice -1
+        self.voxels_data = np.full(voxels_rgba.shape[:3], -1, dtype=np.int32)
+        non_empty_voxels = voxels_rgba[..., 3] > 0
+
+        # Para cada cor única na paleta, encontra todos os voxels que têm essa cor e atribui o índice da paleta.
+        for material_index, color in enumerate(palette_normalized):
+            matching_voxels = np.all(voxels_rgba == color, axis=3)
+            self.voxels_data[matching_voxels] = material_index
+
         # Aloca memória na GPU
         self.voxels_gpu = cuda.to_device(self.voxels_data)
-        
         materials_np = np.array([mat.to_numpy() for mat in self.materials], dtype=Material.dtype)
         self.materials_gpu = cuda.to_device(materials_np)
         self._is_gpu_voxels_valid = True
@@ -103,12 +112,14 @@ class VoxelsHittable(Hittable):
             self.voxels_gpu = cuda.to_device(self.voxels_data)
             self._is_gpu_voxels_valid = True
 
-        return np.array([(
+        # print(f"Voxels_gpu: {self.voxels_gpu}, Materials_gpu: {self.materials_gpu}")
+        # print(f"Voxels_gpu: {int(self.voxels_gpu)}, Materials_gpu: {int(self.materials_gpu)}")
+        return np.array((
             self.word_position.position.to_numpy(),
             self.word_position.rotation.to_numpy(),
             self.word_position.scale.to_numpy(),
-            self.voxels_gpu.ptr,
+            int(self.voxels_gpu),
             self.voxels_data.shape,
-            self.materials_gpu.ptr,
+            int(self.materials_gpu),
             len(self.materials)
-        )], dtype=voxels_dtype)
+        ), dtype=voxels_dtype)

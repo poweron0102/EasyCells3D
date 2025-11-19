@@ -4,6 +4,7 @@ from EasyCells3D import Game
 from EasyCells3D.Components import Camera, Item
 from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
+from EasyCells3D.Components.VoxelsHittable import VoxelsHittable
 from EasyCells3D.Geometry import Vec3
 from EasyCells3D.Material import Material, Texture
 from UserComponents.ratating_obj import RotatingObj
@@ -64,6 +65,10 @@ def init(game: Game):
     lua = create_planet("Moon", 0.15, "Texture/stone_andesite_smooth.png", 1.5, 120 * speed_scale, 0)
     lua.SetParent(earth)
     lua.transform.scale = Vec3(3, 0.5, 1)
+
+    nave = game.CreateItem()
+    nave.AddComponent(VoxelsHittable("DualStriker.vox"))
+    nave.transform.position += Vec3(0, 5, 0)
 
 
 def loop(game: Game):
