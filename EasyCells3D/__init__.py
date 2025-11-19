@@ -2,7 +2,6 @@ from .Geometry import Vec2
 from .NewGame import NewGame
 from .Game import Game
 from .scheduler import Scheduler, Tick
-from .CudaRenderer import CudaRenderer
 
 __all__ = [
     "Game",
@@ -14,5 +13,4 @@ __all__ = [
     "UiComponents",
     "PhysicsComponents",
     "NetworkComponents",
-    "CudaRenderer",
 ]
