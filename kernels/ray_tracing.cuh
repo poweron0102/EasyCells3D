@@ -31,7 +31,7 @@ typedef struct {
     Material material;
     Vec3f position;
     Quaternion rotation;
-    Vec3f scale; // Não usado na interseção de esfera, mas mantido para consistência
+    Vec3f scale;
 } Sphere;
 
 typedef struct {
@@ -51,20 +51,32 @@ __host__ __device__ inline Vec3f ray_point_at(Ray r, float t) {
 }
 
 __device__ bool intersect_sphere(const Ray* r, const Sphere* s, float t_min, float t_max, HitRecord* rec) {
+    // Transformar o raio para o espaço local da esfera (considerando posição, rotação e escala)
     Vec3f oc = r->origin - s->position;
-    float a = vec3f_dot(r->direction, r->direction);
-    float half_b = vec3f_dot(oc, r->direction);
-    float c = vec3f_dot(oc, oc) - s->radius * s->radius;
+
+    Quaternion inv_rot = quat_conjugate(s->rotation);
+    Vec3f ray_origin_local = quat_rotate_vector(inv_rot, oc);
+    Vec3f ray_dir_local = quat_rotate_vector(inv_rot, r->direction);
+
+    // Aplicar escala inversa
+    Vec3f inv_scale = {1.0f / s->scale.x, 1.0f / s->scale.y, 1.0f / s->scale.z};
+    ray_origin_local = vec3f_mul_comp(ray_origin_local, inv_scale);
+    ray_dir_local = vec3f_mul_comp(ray_dir_local, inv_scale);
+
+    // Agora, fazemos a interseção com uma esfera de raio `s->radius` na origem.
+    float a = vec3f_dot(ray_dir_local, ray_dir_local);
+    float half_b = vec3f_dot(ray_origin_local, ray_dir_local);
+    float c = vec3f_dot(ray_origin_local, ray_origin_local) - s->radius * s->radius;
     float discriminant = half_b * half_b - a * c;
 
     if (discriminant < 0) {
         return false;
     }
 
-    float sqrtd = sqrtf(discriminant);
-    float root = (-half_b - sqrtd) / a;
+    float sqrt_d = sqrtf(discriminant);
+    float root = (-half_b - sqrt_d) / a;
     if (root < t_min || root > t_max) {
-        root = (-half_b + sqrtd) / a;
+        root = (-half_b + sqrt_d) / a;
         if (root < t_min || root > t_max) {
             return false;
         }
@@ -72,7 +84,11 @@ __device__ bool intersect_sphere(const Ray* r, const Sphere* s, float t_min, flo
 
     rec->t = root;
     rec->p = ray_point_at(*r, rec->t);
-    rec->normal = vec3f_normalize((rec->p - s->position) / s->radius);
+
+    // Transformar a normal do espaço local para o espaço global
+    Vec3f p_local = ray_origin_local + ray_dir_local * root;
+    Vec3f normal_local = vec3f_normalize(p_local / s->radius);
+    rec->normal = vec3f_normalize(quat_rotate_vector(s->rotation, vec3f_mul_comp(normal_local, inv_scale)));
     rec->material = s->material;
 
     return true;

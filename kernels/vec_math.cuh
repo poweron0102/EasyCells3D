@@ -73,6 +73,10 @@ __host__ __device__ inline float vec3f_dot(Vec3f a, Vec3f b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
+__host__ __device__ inline Vec3f vec3f_mul_comp(Vec3f a, Vec3f b) {
+    return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+
 __host__ __device__ inline Vec3f vec3f_cross(Vec3f a, Vec3f b) {
     return {
         a.y * b.z - a.z * b.y,

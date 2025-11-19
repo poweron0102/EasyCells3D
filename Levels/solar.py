@@ -61,7 +61,9 @@ def init(game: Game):
     create_planet("Neptune", 0.9, "Texture/wool_colored_light_blue.png", 35, 5 * speed_scale, 85 * speed_scale)
 
     # 3. Lua (continua como filha da Terra)
-    create_planet("Moon", 0.15, "Texture/stone_andesite_smooth.png", 1.5, 120 * speed_scale, 0).SetParent(earth)
+    lua = create_planet("Moon", 0.15, "Texture/stone_andesite_smooth.png", 1.5, 120 * speed_scale, 0)
+    lua.SetParent(earth)
+    lua.transform.scale = Vec3(3, 0.5, 1)
 
 
 def loop(game: Game):
