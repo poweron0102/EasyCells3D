@@ -41,6 +41,13 @@ typedef struct {
     Material material;
 } HitRecord;
 
+typedef struct {
+    bool hit;
+    Material material;
+    Vec2f uv;
+    HitRecord rec;
+} TraceResult;
+
 
 // ===================================================================
 // 2. FUNÇÕES DE RAY TRACING
@@ -94,21 +101,53 @@ __device__ bool intersect_sphere(const Ray* r, const Sphere* s, float t_min, flo
     return true;
 }
 
-__device__ bool trace(const Ray* r, const Sphere* spheres, int num_spheres, float t_min, float t_max, HitRecord* rec, int* hit_sphere_index) {
+__device__ Vec2f get_sphere_uv(const Vec3f* p_world, const Sphere* sphere) {
+    // Transforma o ponto de colisão do espaço do mundo para o espaço local da esfera
+    // para calcular as coordenadas UV corretamente, considerando rotação e escala.
+    Vec3f p_relative_world = *p_world - sphere->position;
+
+    Quaternion inv_rot = quat_conjugate(sphere->rotation);
+    Vec3f p_rotated = quat_rotate_vector(inv_rot, p_relative_world);
+
+    Vec3f inv_scale = {1.0f / sphere->scale.x, 1.0f / sphere->scale.y, 1.0f / sphere->scale.z};
+    Vec3f p_local = vec3f_mul_comp(p_rotated, inv_scale);
+
+    // Calcula as coordenadas esféricas (phi, theta) para mapeamento UV
+    float phi = atan2f(p_local.z, p_local.x);
+    float theta_arg = p_local.y / sphere->radius;
+    float theta = asinf(fmaxf(-1.0f, fminf(1.0f, theta_arg))); // Clamp para segurança numérica
+
+    float u = 1.0f - (phi + M_PI) / (2.0f * M_PI);
+    float v = (theta + M_PI / 2.0f) / M_PI;
+    return {u, v};
+}
+
+__device__ TraceResult trace(const Ray* r, const Sphere* spheres, int num_spheres, float t_min, float t_max) {
     HitRecord temp_rec;
     bool hit_anything = false;
     float closest_so_far = t_max;
-    *hit_sphere_index = -1;
+    int hit_sphere_index = -1;
+    TraceResult result;
+    result.hit = false;
 
     for (int i = 0; i < num_spheres; ++i) {
         if (intersect_sphere(r, &spheres[i], t_min, closest_so_far, &temp_rec)) {
             hit_anything = true;
             closest_so_far = temp_rec.t;
-            *rec = temp_rec;
-            *hit_sphere_index = i;
+            result.rec = temp_rec;
+            hit_sphere_index = i;
         }
     }
-    return hit_anything;
+
+    if (hit_anything) {
+        result.hit = true;
+        result.material = result.rec.material;
+
+        // Calcula as coordenadas UV chamando a função dedicada
+        const Sphere* hit_sphere = &spheres[hit_sphere_index];
+        result.uv = get_sphere_uv(&result.rec.p, hit_sphere);
+    }
+    return result;
 }
 
 
