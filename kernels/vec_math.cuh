@@ -7,16 +7,30 @@
 // 1. DEFINIÇÕES DAS STRUCTS
 // ===================================================================
 
-typedef struct {
-    float x;
-    float y;
-} Vec2f;
+struct Vec2f {
+    float x, y;
 
-typedef struct {
-    float x;
-    float y;
-    float z;
-} Vec3f;
+    __host__ __device__ inline Vec2f() : x(0), y(0) {}
+    __host__ __device__ inline Vec2f(float x, float y) : x(x), y(y) {}
+
+    __host__ __device__ inline Vec2f operator+(Vec2f r) const { return Vec2f(x + r.x, y + r.y); }
+    __host__ __device__ inline Vec2f operator-(Vec2f r) const { return Vec2f(x - r.x, y - r.y); }
+    __host__ __device__ inline Vec2f operator*(float s) const { return Vec2f(x * s, y * s); }
+    __host__ __device__ inline Vec2f operator/(float s) const { return Vec2f(x / s, y / s); }
+};
+
+struct Vec3f {
+    float x, y, z;
+
+    __host__ __device__ inline Vec3f() : x(0), y(0), z(0) {}
+    __host__ __device__ inline Vec3f(float x, float y, float z) : x(x), y(y), z(z) {}
+
+    __host__ __device__ inline Vec3f operator+(Vec3f r) const { return Vec3f(x + r.x, y + r.y, z + r.z); }
+    __host__ __device__ inline Vec3f operator-(Vec3f r) const { return Vec3f(x - r.x, y - r.y, z - r.z); }
+    __host__ __device__ inline Vec3f operator*(float s) const { return Vec3f(x * s, y * s, z * s); }
+    __host__ __device__ inline Vec3f operator/(float s) const { return Vec3f(x / s, y / s, z / s); }
+    __host__ __device__ inline Vec3f operator-() const { return Vec3f(-x, -y, -z); }
+};
 
 typedef struct {
     float w;
@@ -29,23 +43,7 @@ typedef struct {
 // 2. FUNÇÕES DE UTILIDADE
 // ===================================================================
 
-// --- Funções Vec2f ---
-
-__host__ __device__ inline Vec2f vec2f_add(Vec2f a, Vec2f b) {
-    return {a.x + b.x, a.y + b.y};
-}
-
-__host__ __device__ inline Vec2f vec2f_sub(Vec2f a, Vec2f b) {
-    return {a.x - b.x, a.y - b.y};
-}
-
-__host__ __device__ inline Vec2f vec2f_mul_scalar(Vec2f v, float s) {
-    return {v.x * s, v.y * s};
-}
-
-__host__ __device__ inline Vec2f vec2f_div_scalar(Vec2f v, float s) {
-    return {v.x / s, v.y / s};
-}
+// --- Funções Livres (Vec2f) ---
 
 __host__ __device__ inline float vec2f_dot(Vec2f a, Vec2f b) {
     return a.x * b.x + a.y * b.y;
@@ -58,29 +56,13 @@ __host__ __device__ inline float vec2f_magnitude(Vec2f v) {
 __host__ __device__ inline Vec2f vec2f_normalize(Vec2f v) {
     float mag = vec2f_magnitude(v);
     if (mag > 1e-6f) { // Evita divisão por zero
-        return vec2f_div_scalar(v, mag);
+        return v / mag;
     }
-    return {0.0f, 0.0f};
+    return Vec2f(0.0f, 0.0f);
 }
 
 
-// --- Funções Vec3f ---
-
-__host__ __device__ inline Vec3f vec3f_add(Vec3f a, Vec3f b) {
-    return {a.x + b.x, a.y + b.y, a.z + b.z};
-}
-
-__host__ __device__ inline Vec3f vec3f_sub(Vec3f a, Vec3f b) {
-    return {a.x - b.x, a.y - b.y, a.z - b.z};
-}
-
-__host__ __device__ inline Vec3f vec3f_mul_scalar(Vec3f v, float s) {
-    return {v.x * s, v.y * s, v.z * s};
-}
-
-__host__ __device__ inline Vec3f vec3f_div_scalar(Vec3f v, float s) {
-    return {v.x / s, v.y / s, v.z / s};
-}
+// --- Funções Livres (Vec3f) ---
 
 __host__ __device__ inline float vec3f_dot(Vec3f a, Vec3f b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -104,16 +86,15 @@ __host__ __device__ inline Vec3f vec3f_normalize(Vec3f v) {
     // (ou um número muito pequeno) de forma segura na GPU.
     float inv_mag = 1.0f / fmaxf(mag, 1e-9f);
     if (mag <= 1e-9f) {
-        return {0.0f, 0.0f, 0.0f};
+        return Vec3f(0.0f, 0.0f, 0.0f);
     }
-    return vec3f_mul_scalar(v, inv_mag);
+    return v * inv_mag;
 }
 
 __host__ __device__ inline Vec3f vec3f_reflect(Vec3f v_in, Vec3f normal) {
     // v_out = v_in - 2 * dot(v_in, normal) * normal
     float dot_vn = vec3f_dot(v_in, normal);
-    Vec3f scaled_normal = vec3f_mul_scalar(normal, 2.0f * dot_vn);
-    return vec3f_sub(v_in, scaled_normal);
+    return v_in - normal * (2.0f * dot_vn);
 }
 
 // --- Funções Quaternion ---

@@ -48,11 +48,11 @@ typedef struct {
 
 __host__ __device__ inline Vec3f ray_point_at(Ray r, float t) {
     // p(t) = origin + t * direction
-    return vec3f_add(r.origin, vec3f_mul_scalar(r.direction, t));
+    return r.origin + r.direction * t;
 }
 
 __device__ bool intersect_sphere(const Ray* r, const Sphere* s, float t_min, float t_max, HitRecord* rec) {
-    Vec3f oc = vec3f_sub(r->origin, s->position);
+    Vec3f oc = r->origin - s->position;
     float a = vec3f_dot(r->direction, r->direction);
     float half_b = vec3f_dot(oc, r->direction);
     float c = vec3f_dot(oc, oc) - s->radius * s->radius;
@@ -73,7 +73,7 @@ __device__ bool intersect_sphere(const Ray* r, const Sphere* s, float t_min, flo
 
     rec->t = root;
     rec->p = ray_point_at(*r, rec->t);
-    rec->normal = vec3f_normalize(vec3f_div_scalar(vec3f_sub(rec->p, s->position), s->radius));
+    rec->normal = vec3f_normalize((rec->p - s->position) / s->radius);
     rec->material = s->material;
 
     return true;
