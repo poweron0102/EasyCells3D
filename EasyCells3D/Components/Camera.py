@@ -1,4 +1,5 @@
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -21,9 +22,10 @@ SphereHittable: type
 def LoadKernel(file: str, options: list[str] = None) -> SourceModule:
     """
     Carrega e compila um kernel CUDA a partir do caminho 'file'.
+    Ele busca o arquivo na pasta `./kernels`.
     Retorna um objeto pycuda.compiler.SourceModule.
     """
-    path = Path(file)
+    path = Path("kernels/" + file)
     if not path.exists():
         raise FileNotFoundError(f"Kernel file not found: {path}")
 
@@ -33,7 +35,12 @@ def LoadKernel(file: str, options: list[str] = None) -> SourceModule:
     compile_options = options if options is not None else ['-use_fast_math']
 
     try:
-        module = SourceModule(src, options=compile_options)
+        module = SourceModule(
+            src,
+            options=compile_options,
+            include_dirs=[os.getcwd() + '/kernels/'],  # Onde procurar os #include "..."
+            no_extern_c=True  # Opcional: útil se estiver usando templates C++
+        )
         return module
     except Exception as e:
         # inclui o conteúdo do arquivo no erro pode ser verboso; aqui apenas repassa mensagem

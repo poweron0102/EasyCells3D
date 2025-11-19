@@ -29,7 +29,7 @@ def init(game: Game):
     # --- Câmera e Controles ---
     camera = game.CreateItem()
     # A luz ambiente é baixa para que o Sol seja a principal fonte de luz.
-    camera.AddComponent(Camera(sky_box=Texture.get("Texture/redstone_lamp_on.png"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05)))
+    camera.AddComponent(Camera(sky_box=Texture.get("space.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05)))
 
     camera.transform.position = Vec3(0, 15, -40)
     camera.transform.forward = Vec3(0, 0, 1)
