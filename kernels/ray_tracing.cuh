@@ -47,7 +47,6 @@ typedef struct {
 // ===================================================================
 
 __host__ __device__ inline Vec3f ray_point_at(Ray r, float t) {
-    // p(t) = origin + t * direction
     return r.origin + r.direction * t;
 }
 

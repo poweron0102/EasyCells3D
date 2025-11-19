@@ -1,6 +1,11 @@
 #ifndef VEC_MATH_CUH
 #define VEC_MATH_CUH
 
+// Definição de M_PI se não estiver disponível
+#ifndef M_PI
+#define M_PI (3.14159265358979323846f)
+#endif
+
 #include <math.h>
 
 // ===================================================================

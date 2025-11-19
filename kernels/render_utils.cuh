@@ -52,8 +52,8 @@ __device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3
             float phi = atan2f(p_local.z, p_local.x);
             float theta_arg = p_local.y / hit_sphere->radius;
             float theta = asinf(fmaxf(-1.0f, fminf(1.0f, theta_arg))); // Clamp para evitar NaN
-            float u = 1.0f - (phi + 3.14159265f) / (2.0f * 3.14159265f);
-            float v = (theta + 3.14159265f / 2.0f) / 3.14159265f;
+            float u = 1.0f - (phi + M_PI) / (2.0f * M_PI);
+            float v = (theta + M_PI / 2.0f) / M_PI;
             diffuse_color = texture_sample(&textures[rec.material.texture_index], Vec2f(u, v));
         }
 
@@ -80,8 +80,8 @@ __device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3
 
     // Cor de fundo (Skybox)
     if (sky_box_index != -1) {
-        float u = 0.5f + atan2f(ray_direction.z, ray_direction.x) / (2.0f * 3.14159265f);
-        float v = 0.5f - asinf(ray_direction.y) / 3.14159265f;
+        float u = 0.5f + atan2f(ray_direction.z, ray_direction.x) / (2.0f * M_PI);
+        float v = 0.5f - asinf(ray_direction.y) / M_PI;
         return texture_sample(&textures[sky_box_index], Vec2f(u, v));
     }
 
