@@ -48,7 +48,13 @@ __device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3
         if (rec.material.texture_index != -1 && hit_sphere_index != -1) {
             // Calcular coordenadas UV para a esfera
             const Sphere* hit_sphere = &spheres[hit_sphere_index];
-            Vec3f p_local = rec.p - hit_sphere->position;
+            Vec3f p_world_local = rec.p - hit_sphere->position;
+
+            // Para aplicar a textura corretamente, transformamos o ponto de colisão (relativo ao centro)
+            // para o espaço local da esfera, aplicando o inverso da rotação da esfera.
+            Quaternion inv_rot = quat_conjugate(hit_sphere->rotation);
+            Vec3f p_local = quat_rotate_vector(inv_rot, p_world_local);
+
             float phi = atan2f(p_local.z, p_local.x);
             float theta_arg = p_local.y / hit_sphere->radius;
             float theta = asinf(fmaxf(-1.0f, fminf(1.0f, theta_arg))); // Clamp para evitar NaN
