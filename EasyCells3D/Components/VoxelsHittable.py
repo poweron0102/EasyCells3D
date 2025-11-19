@@ -1,6 +1,7 @@
 import numpy as np
 import midvoxio.voxio as voxio
 import pycuda.driver as cuda
+from midvoxio.vox import Vox
 
 from EasyCells3D.Components import Transform
 from EasyCells3D.Components.Camera import Hittable
@@ -30,11 +31,12 @@ class VoxelsHittable(Hittable):
         # Carrega o arquivo .vox
         full_vox_path = "Assets/" + vox_file_name
         try:
-            vox_model = voxio.Vox.from_file(full_vox_path)
+            vox_model: Vox = voxio.Vox.from_file(full_vox_path)
         except FileNotFoundError:
             print(f"Erro: Arquivo .vox não encontrado em: {full_vox_path}")
             self.voxels_data = None
             self.materials = []
+            self.voxels_gpu = None
             return
         
         # Converte a paleta de cores para materiais
@@ -53,13 +55,13 @@ class VoxelsHittable(Hittable):
         
         materials_np = np.array([mat.to_numpy() for mat in self.materials], dtype=Material.dtype)
         self.materials_gpu = cuda.to_device(materials_np)
+        self._is_gpu_voxels_valid = True
 
     def init(self):
         super().init()
         self.word_position = self.transform
 
     def loop(self):
-        # Esta atribuição pode ser otimizada se a transformação não mudar a cada quadro
         self.word_position = Transform.Global
 
     def on_destroy(self):
@@ -73,7 +75,34 @@ class VoxelsHittable(Hittable):
             
         self.on_destroy = lambda: None # Evita chamadas repetidas
 
+    def get_voxel(self, x: int, y: int, z: int) -> int:
+        """Retorna o índice do material para um voxel nas coordenadas (x, y, z)."""
+        if self.voxels_data is None:
+            return -1
+        return self.voxels_data[x, y, z]
+
+    def set_voxel(self, x: int, y: int, z: int, material_index: int):
+        """
+        Define o índice do material para um voxel nas coordenadas (x, y, z).
+        Isso invalida os dados na GPU, que serão atualizados no próximo ciclo.
+        """
+        if self.voxels_data is None:
+            return
+        try:
+            self.voxels_data[x, y, z] = material_index
+            self._is_gpu_voxels_valid = False  # Marca os dados da GPU como inválidos
+        except IndexError:
+            print(f"Erro: Coordenadas ({x}, {y}, {z}) fora dos limites para set_voxel.")
+
     def to_numpy(self):
+        if not self._is_gpu_voxels_valid:
+            # Libera a memória antiga antes de alocar a nova, se existir
+            if self.voxels_gpu:
+                self.voxels_gpu.free()
+            # Reenvia os dados atualizados dos voxels para a GPU
+            self.voxels_gpu = cuda.to_device(self.voxels_data)
+            self._is_gpu_voxels_valid = True
+
         return np.array([(
             self.word_position.position.to_numpy(),
             self.word_position.rotation.to_numpy(),
