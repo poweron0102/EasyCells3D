@@ -150,15 +150,18 @@ __device__ bool intersect_voxels(const Ray* r, const Voxels* v, float t_min, flo
     Vec3f grid_dims = { (float)v->voxels_size[0], (float)v->voxels_size[1], (float)v->voxels_size[2] };
     Vec3f inv_scale = { grid_dims.x / v->scale.x, grid_dims.y / v->scale.y, grid_dims.z / v->scale.z };
 
-    Vec3f grid_origin = vec3f_mul_comp(ray_origin_local, inv_scale);
+    // Centraliza a origem da grade em (0,0,0)
+    Vec3f grid_center_offset = grid_dims * 0.5f;
+    Vec3f grid_origin = vec3f_mul_comp(ray_origin_local, inv_scale) + grid_center_offset;
     Vec3f grid_dir = vec3f_mul_comp(ray_dir_local, inv_scale);
 
     // Passo 2: Interseção com o AABB da grade de voxels
+    // O AABB agora vai de (0,0,0) até grid_dims, pois a origem do raio foi deslocada.
     Vec3f inv_dir = { 1.0f / grid_dir.x, 1.0f / grid_dir.y, 1.0f / grid_dir.z };
     Vec3f t1 = vec3f_mul_comp(Vec3f(0.0f, 0.0f, 0.0f) - grid_origin, inv_dir);
     Vec3f t2 = vec3f_mul_comp(grid_dims - grid_origin, inv_dir);
 
-    float t_entry_x = fminf(t1.x, t2.x); float t_exit_x = fmaxf(t1.x, t2.x);
+    float t_entry_x = fminf(t1.x, t2.x); float t_exit_x = fmaxf(t1.x, t2.x); // NOLINT
     float t_entry_y = fminf(t1.y, t2.y); float t_exit_y = fmaxf(t1.y, t2.y);
     float t_entry_z = fminf(t1.z, t2.z); float t_exit_z = fmaxf(t1.z, t2.z);
 

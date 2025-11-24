@@ -49,9 +49,6 @@ class VoxelsHittable(Hittable):
         for r, g, b, a in palette_normalized:
             diffuse_color = Vec3(r, g, b)
             self.materials.append(Material(diffuse_color=diffuse_color, emissive_color=diffuse_color))
-
-        # Encontra o índice do material para cada voxel
-        # A cor (0,0,0,0) representa um voxel vazio, que terá índice -1
         
         # Cria uma matriz interna para os dados dos voxels
         voxels_data_inner = np.full(voxels_rgba.shape[:3], -1, dtype=np.int32)
