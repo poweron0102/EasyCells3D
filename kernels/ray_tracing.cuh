@@ -203,22 +203,28 @@ __device__ bool intersect_voxels(const Ray* r, const Voxels* v, float t_min, flo
             int material_index = v->voxels_ptr[voxel_index];
 
             if (material_index != -1) {
-                // Colisão!
-                float hit_dist_grid = 0.0f;
-                if (normal_local_grid.x != 0) hit_dist_grid = t_max_dda.x - t_delta.x;
-                else if (normal_local_grid.y != 0) hit_dist_grid = t_max_dda.y - t_delta.y;
-                else hit_dist_grid = t_max_dda.z - t_delta.z;
+                float prev_t_max_x = t_max_dda.x - t_delta.x;
+                float prev_t_max_y = t_max_dda.y - t_delta.y;
+                float prev_t_max_z = t_max_dda.z - t_delta.z;
 
+                float hit_dist_grid = fmaxf(fmaxf(prev_t_max_x, prev_t_max_y), prev_t_max_z);
                 float final_dist = start_dist + hit_dist_grid;
 
-                // A distância final está no espaço de grade. Precisamos convertê-la de volta para o espaço do mundo.
-                // O fator de escala é o comprimento do vetor de direção do raio no espaço da grade.
-                float grid_to_world_scale = vec3f_magnitude(ray_dir_local) / vec3f_magnitude(grid_dir);
-                rec->t = final_dist * grid_to_world_scale;
+                // Determina a normal baseada em qual face foi atingida (a que tem o maior t anterior)
+                if (hit_dist_grid == prev_t_max_x) normal_local_grid = {- (float)step_x, 0, 0};
+                else if (hit_dist_grid == prev_t_max_y) normal_local_grid = {0, - (float)step_y, 0};
+                else normal_local_grid = {0, 0, - (float)step_z};
 
+                // Passo 4: Transformar o ponto de colisão e a normal de volta para o espaço do mundo
+                // 4.1. Calcula o ponto de colisão no espaço da grade
+                Vec3f hit_point_grid = grid_origin + grid_dir * final_dist;
+                Vec3f inv_grid_dims = { 1.0f / grid_dims.x, 1.0f / grid_dims.y, 1.0f / grid_dims.z };
+                Vec3f temp_vec = vec3f_mul_comp(hit_point_grid - grid_center_offset, v->scale);
+                Vec3f hit_point_local = vec3f_mul_comp(temp_vec, inv_grid_dims);
+                rec->p = quat_rotate_vector(v->rotation, hit_point_local) + v->position;
+
+                rec->t = vec3f_magnitude(rec->p - r->origin);
                 if (rec->t < t_min || rec->t > t_max) return false;
-
-                rec->p = ray_point_at(*r, rec->t);
 
                 // Transformar a normal do espaço da grade para o espaço do mundo
                 Vec3f normal_local = vec3f_normalize(vec3f_mul_comp(normal_local_grid, inv_scale));
@@ -234,25 +240,21 @@ __device__ bool intersect_voxels(const Ray* r, const Voxels* v, float t_min, flo
             if (t_max_dda.x < t_max_dda.z) {
                 if (t_max_dda.x > t_exit) return false;
                 voxel_x += step_x;
-                t_max_dda.x += t_delta.x;
-                normal_local_grid = {- (float)step_x, 0, 0};
+                t_max_dda.x += t_delta.x;                
             } else {
                 if (t_max_dda.z > t_exit) return false;
                 voxel_z += step_z;
-                t_max_dda.z += t_delta.z;
-                normal_local_grid = {0, 0, - (float)step_z};
+                t_max_dda.z += t_delta.z;                
             }
         } else {
             if (t_max_dda.y < t_max_dda.z) {
                 if (t_max_dda.y > t_exit) return false;
                 voxel_y += step_y;
-                t_max_dda.y += t_delta.y;
-                normal_local_grid = {0, - (float)step_y, 0};
+                t_max_dda.y += t_delta.y;                
             } else {
                 if (t_max_dda.z > t_exit) return false;
                 voxel_z += step_z;
-                t_max_dda.z += t_delta.z;
-                normal_local_grid = {0, 0, - (float)step_z};
+                t_max_dda.z += t_delta.z;                
             }
         }
     }
