@@ -15,6 +15,8 @@ extern "C" __global__ void kernel(
     Vec3f pixel_delta_v,
     Sphere* spheres,
     int num_spheres,
+    Voxels* voxels,
+    int num_voxels,
     Texture* textures,
     int sky_box_index,
     Vec3f light_direction,
@@ -32,7 +34,7 @@ extern "C" __global__ void kernel(
     int pixel_index = (i * image_height + j) * 3;
 
     Vec3f color = per_pixel(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,
-                            spheres, num_spheres, textures, sky_box_index, light_direction, ambient_light);
+                            spheres, num_spheres, voxels, num_voxels, textures, sky_box_index, light_direction, ambient_light);
 
     // Clamping da cor para o intervalo [0, 1]
     color.x = fmaxf(0.0f, fminf(1.0f, color.x));

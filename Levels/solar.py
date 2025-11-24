@@ -69,6 +69,7 @@ def init(game: Game):
     nave = game.CreateItem()
     nave.AddComponent(VoxelsHittable("DualStriker.vox"))
     nave.transform.position += Vec3(0, 5, 0)
+    nave.transform.scale = Vec3(5, 5, 5)
 
 
 def loop(game: Game):

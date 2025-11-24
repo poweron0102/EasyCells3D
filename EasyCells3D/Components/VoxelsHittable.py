@@ -8,13 +8,13 @@ from EasyCells3D.Geometry import Vec3, Quaternion
 from EasyCells3D.Material import Material
 
 voxels_dtype = np.dtype([
-    ("position", Vec3.dtype),
-    ("rotation", Quaternion.dtype),
-    ("scale", Vec3.dtype),
-    ("voxels_ptr", np.uintp),
-    ("voxels_size", (np.uint32, 3)),
-    ("materials_ptr", np.uintp),
-    ("num_materials", np.uint32)
+    ("voxels_ptr", np.uintp),       # 8 bytes
+    ("materials_ptr", np.uintp),    # 8 bytes
+    ("position", Vec3.dtype),       # 12 bytes
+    ("rotation", Quaternion.dtype), # 16 bytes
+    ("scale", Vec3.dtype),          # 12 bytes
+    ("voxels_size", (np.uint32, 3)),# 12 bytes
+    ("num_materials", np.uint32)    # 4 bytes
 ])
 
 
@@ -115,11 +115,11 @@ class VoxelsHittable(Hittable):
         # print(f"Voxels_gpu: {self.voxels_gpu}, Materials_gpu: {self.materials_gpu}")
         # print(f"Voxels_gpu: {int(self.voxels_gpu)}, Materials_gpu: {int(self.materials_gpu)}")
         return np.array((
-            self.word_position.position.to_numpy(),
-            self.word_position.rotation.to_numpy(),
-            self.word_position.scale.to_numpy(),
-            int(self.voxels_gpu),
-            self.voxels_data.shape,
-            int(self.materials_gpu),
-            len(self.materials)
+            int(self.voxels_gpu),  # voxels_ptr
+            int(self.materials_gpu),  # materials_ptr
+            self.word_position.position.to_numpy(),  # position
+            self.word_position.rotation.to_numpy(),  # rotation
+            self.word_position.scale.to_numpy(),  # scale
+            self.voxels_data.shape,  # voxels_size
+            len(self.materials)  # num_materials
         ), dtype=voxels_dtype)

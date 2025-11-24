@@ -35,13 +35,13 @@ __device__ Vec3f texture_sample(const Texture* tex, Vec2f uv) {
 }
 
 
-__device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3f camera_center, Vec3f pixel00_loc, Vec3f pixel_delta_u, Vec3f pixel_delta_v, const Sphere* spheres, int num_spheres, const Texture* textures, int sky_box_index, Vec3f light_dir, Vec3f ambient_light) {
+__device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3f camera_center, Vec3f pixel00_loc, Vec3f pixel_delta_u, Vec3f pixel_delta_v, const Sphere* spheres, int num_spheres, const Voxels* voxels, int num_voxels, const Texture* textures, int sky_box_index, Vec3f light_dir, Vec3f ambient_light) {
     // Calcula a direção do raio para o pixel atual
     Vec3f pixel_center = pixel00_loc + (pixel_delta_u * x) + (pixel_delta_v * y);
     Vec3f ray_direction = vec3f_normalize(pixel_center - camera_center);
     Ray r = {camera_center, ray_direction};
 
-    TraceResult trace_res = trace(&r, spheres, num_spheres, 0.001f, 1e10f);
+    TraceResult trace_res = trace(&r, spheres, num_spheres, voxels, num_voxels, 0.001f, 1e10f);
     if (trace_res.hit) {
         Vec3f diffuse_color = trace_res.material.diffuse_color;
         if (trace_res.material.texture_index != -1) {
