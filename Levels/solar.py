@@ -67,9 +67,20 @@ def init(game: Game):
     lua.transform.scale = Vec3(3, 0.5, 1)
 
     nave = game.CreateItem()
-    nave.AddComponent(VoxelsHittable("DualStriker.vox"))
+    nave.AddComponent(VoxelsHittable("SpaceShips/DualStriker.vox"))
     nave.transform.position += Vec3(0, 5, 0)
     nave.transform.scale = Vec3(5, 5, 5)
+
+    nave = game.CreateItem()
+    nave.AddComponent(VoxelsHittable("SpaceShips/UltravioletIntruder.vox"))
+    nave.transform.position += Vec3(0, 5, 10)
+    nave.transform.scale = Vec3(5, 5, 5)
+
+    nave = game.CreateItem()
+    nave.AddComponent(VoxelsHittable("SpaceShips/RedFighter.vox"))
+    nave.transform.position += Vec3(0, 5, 20)
+    nave.transform.scale = Vec3(5, 5, 5)
+    nave.AddComponent(RotatingObj(5))
 
 
 def loop(game: Game):

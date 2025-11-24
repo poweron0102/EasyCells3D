@@ -48,17 +48,23 @@ class VoxelsHittable(Hittable):
         self.materials: list[Material] = []
         for r, g, b, a in palette_normalized:
             diffuse_color = Vec3(r, g, b)
-            self.materials.append(Material(diffuse_color=diffuse_color))
+            self.materials.append(Material(diffuse_color=diffuse_color, emissive_color=diffuse_color))
 
         # Encontra o índice do material para cada voxel
         # A cor (0,0,0,0) representa um voxel vazio, que terá índice -1
-        self.voxels_data = np.full(voxels_rgba.shape[:3], -1, dtype=np.int32)
-        non_empty_voxels = voxels_rgba[..., 3] > 0
+        
+        # Cria uma matriz interna para os dados dos voxels
+        voxels_data_inner = np.full(voxels_rgba.shape[:3], -1, dtype=np.int32)
 
         # Para cada cor única na paleta, encontra todos os voxels que têm essa cor e atribui o índice da paleta.
         for material_index, color in enumerate(palette_normalized):
             matching_voxels = np.all(voxels_rgba == color, axis=3)
-            self.voxels_data[matching_voxels] = material_index
+            voxels_data_inner[matching_voxels] = material_index
+
+        # Adiciona uma camada de padding com -1 em volta da matriz de voxels.
+        # Isso simplifica o acesso na GPU, evitando a necessidade de verificações de limites.
+        self.voxels_data = np.pad(voxels_data_inner, pad_width=1, mode='constant', constant_values=-1)
+
 
         # Aloca memória na GPU
         self.voxels_gpu = cuda.to_device(self.voxels_data)
