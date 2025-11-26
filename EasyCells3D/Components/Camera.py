@@ -142,8 +142,8 @@ class Camera(Component):
         forward = Vec3(0.0, 0.0, 1.0)
         up = Vec3(0.0, 1.0, 0.0)
 
-        w = self.transform.rotation.rotate_vector(forward).normalize()
-        u = self.transform.rotation.rotate_vector(up).cross(w).normalize()
+        w = self.transform.Global.rotation.rotate_vector(forward).normalize()
+        u = self.transform.Global.rotation.rotate_vector(up).cross(w).normalize()
         v = w.cross(u)
 
         viewport_u = u * viewport_width
