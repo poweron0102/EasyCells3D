@@ -91,6 +91,13 @@ class Vec2:
             self.x * math.sin(angle) + self.y * math.cos(angle)
         )
 
+    def lerp(self, target: 'Vec2', t: float) -> 'Vec2':
+        """Linear interpolation entre self e target (t em [0,1])."""
+        return Vec2(
+            self.x + (target.x - self.x) * t,
+            self.y + (target.y - self.y) * t
+        )
+
     def distance(self, param: 'Vec2') -> float:
         return math.sqrt((self.x - param.x) ** 2 + (self.y - param.y) ** 2)
 
@@ -165,6 +172,14 @@ class Vec3:
 
     def to_numpy(self):
         return np.array((self.x, self.y, self.z), dtype=vec3f_dtype)
+
+    def lerp(self, target: 'Vec3', t: float) -> 'Vec3':
+        """Linear interpolation entre self e target (t em [0,1])."""
+        return Vec3(
+            self.x + (target.x - self.x) * t,
+            self.y + (target.y - self.y) * t,
+            self.z + (target.z - self.z) * t
+        )
 
 
 @dataclass
@@ -265,6 +280,58 @@ class Quaternion:
 
     def inverse(self):
         return Quaternion(self.w, -self.x, -self.y, -self.z)
+
+    def lerp(self, target: 'Quaternion', t: float) -> 'Quaternion':
+        """
+        Spherical linear interpolation (slerp) entre dois quaternions.
+        Quando o ângulo é muito pequeno, faz nlerp (lerp + normalize) como fallback.
+        """
+        # Dot product
+        dot = self.w * target.w + self.x * target.x + self.y * target.y + self.z * target.z
+
+        # Se dot < 0, invertemos target para garantir o caminho mais curto
+        if dot < 0.0:
+            target_w = -target.w
+            target_x = -target.x
+            target_y = -target.y
+            target_z = -target.z
+            dot = -dot
+        else:
+            target_w = target.w
+            target_x = target.x
+            target_y = target.y
+            target_z = target.z
+
+        DOT_THRESHOLD = 0.9995
+        if dot > DOT_THRESHOLD:
+            # Quaternions muito próximos: uso nlerp (lerp + normalize)
+            w = self.w + t * (target_w - self.w)
+            x = self.x + t * (target_x - self.x)
+            y = self.y + t * (target_y - self.y)
+            z = self.z + t * (target_z - self.z)
+            result = Quaternion(w, x, y, z).normalize()
+            return result
+
+        # slerp
+        theta_0 = math.acos(dot)  # ângulo inicial
+        sin_theta_0 = math.sin(theta_0)  # denom
+        theta = theta_0 * t  # ângulo interpolado
+        sin_theta = math.sin(theta)
+
+        s0 = math.cos(theta) - dot * sin_theta / sin_theta_0
+        s1 = sin_theta / sin_theta_0
+
+        w = (self.w * s0) + (target_w * s1)
+        x = (self.x * s0) + (target_x * s1)
+        y = (self.y * s0) + (target_y * s1)
+        z = (self.z * s0) + (target_z * s1)
+
+        return Quaternion(w, x, y, z).normalize()
+
+    @staticmethod
+    def identity():
+        return Quaternion(1, 0, 0, 0)
+
 
 
 @dataclass

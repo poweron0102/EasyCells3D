@@ -1,13 +1,13 @@
-import pygame as pg
-
 from EasyCells3D import Game
 from EasyCells3D.Components import Camera, Item
-from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
 from EasyCells3D.Components.VoxelsHittable import VoxelsHittable
 from EasyCells3D.Geometry import Vec3
 from EasyCells3D.Material import Material, Texture
+from UserComponents.SpaceShip import SpaceShip
 from UserComponents.ratating_obj import RotatingObj
+
+camera: Item
 
 
 def init(game: Game):
@@ -27,14 +27,13 @@ def init(game: Game):
         planet.AddComponent(RotatingObj(speed=rotation_speed * speed_scale))
         return planet
 
+    nave = game.CreateItem()
     # --- Câmera e Controles ---
-    camera = game.CreateItem()
-    # A luz ambiente é baixa para que o Sol seja a principal fonte de luz.
-    camera.AddComponent(Camera(sky_box=Texture.get("space.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05)))
-
-    camera.transform.position = Vec3(0, 15, -40)
-    camera.transform.forward = Vec3(0, 0, 1)
-    camera.AddComponent(FreeCam())
+    global camera
+    camera = nave.CreateChild()
+    camera_component = camera.AddComponent(
+        Camera(sky_box=Texture.get("space.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05))
+    )
 
     # --- Criação dos Corpos Celestes ---
 
@@ -66,21 +65,21 @@ def init(game: Game):
     lua.SetParent(earth)
     lua.transform.scale = Vec3(3, 0.5, 1)
 
-    nave = game.CreateItem()
+    # --- Naves ---
+    #nave = game.CreateItem()
     nave.AddComponent(VoxelsHittable("SpaceShips/DualStriker.vox"))
-    nave.transform.position += Vec3(0, 5, 0)
-    nave.transform.scale = Vec3(5, 5, 5)
+    nave.transform.position = Vec3(0, 5, 0)
+    nave.transform.scale = Vec3(2, 2, 2)
+    # Adiciona o componente de controle da nave e passa a câmera para ele
+    nave.AddComponent(SpaceShip(camera_component))
+    # nave.AddChild(camera)
+    camera.transform.position = Vec3(0, 3, 3)
+    camera.transform.forward = Vec3(0, -0.5, -1)
 
     nave = game.CreateItem()
     nave.AddComponent(VoxelsHittable("SpaceShips/UltravioletIntruder.vox"))
     nave.transform.position += Vec3(0, 5, 10)
     nave.transform.scale = Vec3(5, 5, 5)
-
-    nave = game.CreateItem()
-    nave.AddComponent(VoxelsHittable("SpaceShips/RedFighter.vox"))
-    nave.transform.position += Vec3(0, 5, 20)
-    nave.transform.scale = Vec3(5, 5, 5)
-    nave.AddComponent(RotatingObj(5))
 
 
 def loop(game: Game):

@@ -20,7 +20,8 @@ extern "C" __global__ void kernel(
     Texture* textures,
     int sky_box_index,
     Vec3f light_direction,
-    Vec3f ambient_light
+    Vec3f ambient_light,
+    int max_bounces
 ) {
     // Mapeia i para X (Largura) e j para Y (Altura)
     int i = blockIdx.x * blockDim.x + threadIdx.x; // Coordenada X
@@ -33,8 +34,15 @@ extern "C" __global__ void kernel(
 
     int pixel_index = (i * image_height + j) * 3;
 
-    Vec3f color = per_pixel(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,
+    Vec3f color;
+    if (max_bounces) {
+        color = per_pixel_advanced(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,
                             spheres, num_spheres, voxels, num_voxels, textures, sky_box_index, light_direction, ambient_light);
+    }
+    else {
+        color = per_pixel(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,
+                            spheres, num_spheres, voxels, num_voxels, textures, sky_box_index, light_direction, ambient_light);
+    }
 
     // Clamping da cor para o intervalo [0, 1]
     color.x = fmaxf(0.0f, fminf(1.0f, color.x));

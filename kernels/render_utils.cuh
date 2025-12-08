@@ -83,5 +83,105 @@ __device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3
     return start_color * (1.0f - t) + end_color * t;
 }
 
+// ===================================================================
+// (Sombras + Reflexos)
+// ===================================================================
+__device__ Vec3f per_pixel_advanced(int x, int y, int image_width, int image_height, Vec3f camera_center, Vec3f pixel00_loc, Vec3f pixel_delta_u, Vec3f pixel_delta_v, const Sphere* spheres, int num_spheres, const Voxels* voxels, int num_voxels, const Texture* textures, int sky_box_index, Vec3f light_dir, Vec3f ambient_light) {
+
+    // Configuração inicial do raio
+    Vec3f pixel_center = pixel00_loc + (pixel_delta_u * x) + (pixel_delta_v * y);
+    Vec3f ray_direction = vec3f_normalize(pixel_center - camera_center);
+    Ray current_ray = {camera_center, ray_direction};
+
+    Vec3f final_color = {0.0f, 0.0f, 0.0f};
+    Vec3f attenuation = {1.0f, 1.0f, 1.0f}; // Quanto de luz esse caminho ainda carrega
+
+    int max_bounces = 3; // Limite de reflexões para não travar a GPU
+
+    for (int bounce = 0; bounce < max_bounces; bounce++) {
+        TraceResult trace_res = trace(&current_ray, spheres, num_spheres, voxels, num_voxels, 0.001f, 1e10f);
+
+        if (trace_res.hit) {
+            // 1. Cor base e Textura
+            Vec3f albedo = trace_res.material.diffuse_color;
+            if (trace_res.material.texture_index != -1) {
+                albedo = texture_sample(&textures[trace_res.material.texture_index], trace_res.uv);
+            }
+
+            // 2. Emissivo (Adiciona luz diretamente)
+            final_color = final_color + vec3f_mul_comp(attenuation, trace_res.material.emissive_color);
+
+            // 3. Sombras (Shadow Ray)
+            // Lança um raio do ponto de colisão em direção à luz
+            Ray shadow_ray;
+            shadow_ray.origin = trace_res.rec.p + trace_res.rec.normal * 0.001f; // Bias para evitar "acne"
+            shadow_ray.direction = light_dir;
+
+            TraceResult shadow_res = trace(&shadow_ray, spheres, num_spheres, voxels, num_voxels, 0.001f, 1e10f);
+            bool in_shadow = shadow_res.hit;
+
+            // 4. Iluminação Local (Phong/Blinn)
+            Vec3f local_light = {0.0f, 0.0f, 0.0f};
+
+            // Ambiente (sempre presente)
+            local_light = local_light + albedo * ambient_light.x;
+
+            // Se não estiver na sombra, calcula difusa e especular da luz direta
+            if (!in_shadow) {
+                // Difusa
+                float diff = fmaxf(vec3f_dot(trace_res.rec.normal, light_dir), 0.0f);
+                local_light = local_light + (albedo * diff);
+
+                // Especular (Brilho da luz)
+                // Usamos o raio de visão inverso (de onde viemos)
+                Vec3f view_dir = vec3f_normalize(-current_ray.direction);
+                Vec3f reflect_dir = vec3f_reflect(-light_dir, trace_res.rec.normal);
+                float spec_angle = fmaxf(vec3f_dot(view_dir, reflect_dir), 0.0f);
+                float spec = powf(spec_angle, trace_res.material.shininess);
+
+                Vec3f specular_color = Vec3f(1.0f, 1.0f, 1.0f) * (trace_res.material.specular * spec);
+                local_light = local_light + specular_color;
+            }
+
+            // Acumula a luz local ponderada pela atenuação atual
+            final_color = final_color + vec3f_mul_comp(attenuation, local_light);
+
+            // 5. Preparar para o próximo pulo (Reflexão)
+            // Se o material for especular, ele reflete o ambiente
+            if (trace_res.material.specular > 0.0f) {
+                // Atenua a luz para o próximo raio baseado na especularidade
+                // (Materiais menos especulares refletem menos luz)
+                attenuation = attenuation * trace_res.material.specular;
+
+                // Novo raio de reflexão
+                current_ray.origin = trace_res.rec.p + trace_res.rec.normal * 0.001f;
+                current_ray.direction = vec3f_reflect(current_ray.direction, trace_res.rec.normal);
+            } else {
+                // Se não reflete, terminamos o caminho aqui
+                break;
+            }
+
+        } else {
+            // Miss: Atingiu o céu (Skybox)
+            Vec3f sky_color;
+            if (sky_box_index != -1) {
+                float u = 0.5f + atan2f(current_ray.direction.z, current_ray.direction.x) / (2.0f * M_PI);
+                float v = 0.5f - asinf(current_ray.direction.y) / M_PI;
+                sky_color = texture_sample(&textures[sky_box_index], Vec2f(u, v));
+            } else {
+                float t = 0.5f * (current_ray.direction.y + 1.0f);
+                Vec3f start_color = {1.0f, 1.0f, 1.0f};
+                Vec3f end_color = {0.5f, 0.7f, 1.0f};
+                sky_color = start_color * (1.0f - t) + end_color * t;
+            }
+
+            final_color = final_color + vec3f_mul_comp(attenuation, sky_color);
+            break; // O raio escapou para o infinito
+        }
+    }
+
+    return final_color;
+}
+
 
 #endif // RENDER_UTILS_CUH
