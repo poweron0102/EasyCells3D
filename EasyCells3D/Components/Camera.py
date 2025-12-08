@@ -212,6 +212,7 @@ class Camera(Component):
             np.int32(sky_box_index),
             light_direction,
             ambient_light,
+            np.int32(1), # advanced rendering : it is a bool.
             block=block_size,
             grid=grid_size
         )
