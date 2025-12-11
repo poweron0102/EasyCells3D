@@ -86,7 +86,7 @@ __device__ Vec3f per_pixel(int x, int y, int image_width, int image_height, Vec3
 // ===================================================================
 // (Sombras + Reflexos)
 // ===================================================================
-__device__ Vec3f per_pixel_advanced(int x, int y, int image_width, int image_height, Vec3f camera_center, Vec3f pixel00_loc, Vec3f pixel_delta_u, Vec3f pixel_delta_v, const Sphere* spheres, int num_spheres, const Voxels* voxels, int num_voxels, const Texture* textures, int sky_box_index, Vec3f light_dir, Vec3f ambient_light) {
+__device__ Vec3f per_pixel_advanced(int x, int y, int image_width, int image_height, Vec3f camera_center, Vec3f pixel00_loc, Vec3f pixel_delta_u, Vec3f pixel_delta_v, const Sphere* spheres, int num_spheres, const Voxels* voxels, int num_voxels, const Texture* textures, int sky_box_index, Vec3f light_dir, Vec3f ambient_light, int max_bounces) {
 
     // Configuração inicial do raio
     Vec3f pixel_center = pixel00_loc + (pixel_delta_u * x) + (pixel_delta_v * y);
@@ -95,8 +95,6 @@ __device__ Vec3f per_pixel_advanced(int x, int y, int image_width, int image_hei
 
     Vec3f final_color = {0.0f, 0.0f, 0.0f};
     Vec3f attenuation = {1.0f, 1.0f, 1.0f}; // Quanto de luz esse caminho ainda carrega
-
-    int max_bounces = 3; // Limite de reflexões para não travar a GPU
 
     for (int bounce = 0; bounce < max_bounces; bounce++) {
         TraceResult trace_res = trace(&current_ray, spheres, num_spheres, voxels, num_voxels, 0.001f, 1e10f);

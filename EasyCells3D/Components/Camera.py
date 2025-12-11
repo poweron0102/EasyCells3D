@@ -90,6 +90,7 @@ class Camera(Component):
             vfov: float = 90.0,
             light_direction: Vec3 = Vec3(0.0, 1.0, -1.0),
             ambient_light: Vec3 = Vec3(0.1, 0.1, 0.1),
+            max_bounces: int = 0,
     ):
         super().__init__()
         if Game.current_instance not in Camera.instances:
@@ -113,6 +114,7 @@ class Camera(Component):
         self.center = Vec3(0.0, 0.0, 0.0)
         self.ambient_light = ambient_light
         self.light_direction = light_direction.normalize()
+        self.max_bounces = max_bounces
 
         self.pixel00_loc = Vec3(0.0, 0.0, 0.0)
         self.pixel_delta_u = Vec3(0.0, 0.0, 0.0)
@@ -212,7 +214,7 @@ class Camera(Component):
             np.int32(sky_box_index),
             light_direction,
             ambient_light,
-            np.int32(1), # advanced rendering : it is a bool.
+            np.int32(self.max_bounces),
             block=block_size,
             grid=grid_size
         )

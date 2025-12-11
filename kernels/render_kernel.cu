@@ -37,7 +37,8 @@ extern "C" __global__ void kernel(
     Vec3f color;
     if (max_bounces) {
         color = per_pixel_advanced(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,
-                            spheres, num_spheres, voxels, num_voxels, textures, sky_box_index, light_direction, ambient_light);
+                            spheres, num_spheres, voxels, num_voxels, textures, sky_box_index, light_direction, ambient_light,
+                             max_bounces);
     }
     else {
         color = per_pixel(i, j, image_width, image_height, camera_center, pixel00_loc, pixel_delta_u, pixel_delta_v,

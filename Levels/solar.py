@@ -1,11 +1,14 @@
-from EasyCells3D import Game
+from EasyCells3D import Game, Tick
 from EasyCells3D.Components import Camera, Item
+from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
 from EasyCells3D.Components.VoxelsHittable import VoxelsHittable
 from EasyCells3D.Geometry import Vec3
 from EasyCells3D.Material import Material, Texture
 from UserComponents.SpaceShip import SpaceShip
 from UserComponents.ratating_obj import RotatingObj
+
+import pygame as pg
 
 camera: Item
 
@@ -30,7 +33,9 @@ def init(game: Game):
     nave = game.CreateItem()
     # --- Câmera e Controles ---
     global camera
-    camera = nave.CreateChild()
+    #camera = nave.CreateChild()
+    camera = game.CreateItem()
+    camera.AddComponent(FreeCam())
     camera_component = camera.AddComponent(
         Camera(sky_box=Texture.get("space.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05))
     )
@@ -71,7 +76,7 @@ def init(game: Game):
     nave.transform.position = Vec3(0, 5, 0)
     nave.transform.scale = Vec3(2, 2, 2)
     # Adiciona o componente de controle da nave e passa a câmera para ele
-    nave.AddComponent(SpaceShip(camera_component))
+    #nave.AddComponent(SpaceShip(camera_component))
     # nave.AddChild(camera)
     camera.transform.position = Vec3(0, 3, 3)
     camera.transform.forward = Vec3(0, -0.5, -1)
@@ -81,6 +86,13 @@ def init(game: Game):
     nave.transform.position += Vec3(0, 5, 10)
     nave.transform.scale = Vec3(5, 5, 5)
 
-
+tick = Tick(0.1)
 def loop(game: Game):
-    pass
+    if pg.key.get_pressed()[pg.K_b]:
+        if tick():
+            camera.GetComponent(Camera).max_bounces += 1
+            print(f"Max Bounces: {camera.GetComponent(Camera).max_bounces}")
+    elif pg.key.get_pressed()[pg.K_n]:
+        if tick():
+            camera.GetComponent(Camera).max_bounces = max(0, camera.GetComponent(Camera).max_bounces - 1)
+            print(f"Max Bounces: {camera.GetComponent(Camera).max_bounces}")

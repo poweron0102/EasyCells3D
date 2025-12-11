@@ -32,9 +32,6 @@ class VoxelsHittable(Hittable):
         try:
             # vox_to_arr retorna um array (x, y, z, 4) com cores RGBA normalizadas (0-1)
             voxels_rgba = vox_to_arr(full_vox_path)
-            # Converte de (x, y, z) para (x, z, y) e inverte o novo eixo y (antigo z)
-            # Isso corrige a orientação do MagicaVoxel, onde a frente (Z) se torna a altura (Y) no nosso sistema.
-            # np.transpose(0, 2, 1) troca os eixos Y e Z.
             voxels_rgba = np.transpose(voxels_rgba, (0, 2, 1, 3))[:, ::-1, :, :]
         except FileNotFoundError:
             print(f"Erro: Arquivo .vox não encontrado em: {full_vox_path}")
@@ -52,7 +49,7 @@ class VoxelsHittable(Hittable):
         self.materials: list[Material] = []
         for r, g, b, a in palette_normalized:
             diffuse_color = Vec3(r, g, b)
-            self.materials.append(Material(diffuse_color=diffuse_color, emissive_color=diffuse_color * emissive_amount))
+            self.materials.append(Material(diffuse_color=diffuse_color, emissive_color=diffuse_color * emissive_amount, specular=0.01))
         
         # Cria uma matriz interna para os dados dos voxels
         voxels_data_inner = np.full(voxels_rgba.shape[:3], -1, dtype=np.int32)
