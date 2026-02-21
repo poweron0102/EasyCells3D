@@ -2,7 +2,7 @@ import pygame as pg
 
 from typing import Callable
 
-from ..Components.Camera import Camera
+from ..Components.Camera import Camera3D
 from ..Components.Component import Transform
 from ..Geometry import Vec2
 from .UiComponent import UiComponent, panel_maker, UiAlignment
@@ -85,7 +85,7 @@ class Button(UiComponent):
                 )
             ).collidepoint(pg.mouse.get_pos())
         else:
-            mouse = Camera.get_global_mouse_position()
+            mouse = Camera3D.get_global_mouse_position()
             size = Vec2(*self.image.get_size()) * self.transform.scale
             top_left = Transform.Global.position - Vec2(size.x // 2, size.y // 2)
 

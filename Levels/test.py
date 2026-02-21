@@ -1,6 +1,6 @@
 from UserComponents.ratating_obj import RotatingObj
 from EasyCells3D import Game
-from EasyCells3D.Components import Camera, Item
+from EasyCells3D.Components import Camera3D, Item
 from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
 from EasyCells3D.Geometry import Vec3
@@ -18,7 +18,7 @@ def init(game: Game):
     global camera
     global bola
     camera = game.CreateItem()
-    camera.AddComponent(Camera(vfov=60, use_cuda=True, ambient_light=Vec3(0.7, 0.7, 0.7)))
+    camera.AddComponent(Camera3D(vfov=60, use_cuda=True, ambient_light=Vec3(0.7, 0.7, 0.7)))
     camera.transform.position = Vec3(0, 0, -8)
     camera.transform.forward = Vec3(0, 0, 1)
     camera.AddComponent(FreeCam())

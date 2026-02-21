@@ -1,11 +1,9 @@
 import asyncio
-import sys
 from importlib import import_module
 from types import ModuleType
-from typing import Callable, TYPE_CHECKING, Optional
+from typing import Callable, TYPE_CHECKING
 
-import pygame as pg
-from pygame.event import Event
+import raylibpy as rl
 
 from EasyCells3D.NewGame import NewGame
 
@@ -14,23 +12,22 @@ if TYPE_CHECKING:
 
 ItemClass: type
 
-pg.init()
+
+class Camera:
+    def render(self):
+        pass
+
+    def add_to_game(self, game: 'Game', priority: int = -1):
+        if priority < 0:
+            game.cameras.append(self)
+        else:
+            game.cameras.insert(priority, self)
+
 
 
 class Game:
-    instances: dict[int, 'Game'] = {}
-    instances_count: int = 0
-    current_instance: int = 0
-
-    @staticmethod
-    def instance() -> Optional['Game']:
-        if not Game.instances or Game.current_instance not in Game.instances:
-            return None
-        return Game.instances[Game.current_instance]
-
+    instance: 'Game'
     level: ModuleType
-    events: list[Event]
-
     _game_name: str
 
     @property
@@ -41,7 +38,7 @@ class Game:
     def game_name(self, value: str):
         self._game_name = value
         if not self.show_fps:
-            pg.display.set_caption(value)
+            rl.set_window_title(value)
 
     def __init__(
             self,
@@ -49,8 +46,6 @@ class Game:
             game_name: str,
             show_fps: bool = False,
             screen_resolution: tuple[int, int] = (800, 600),
-            screen_flag: int = 0,
-            screen: pg.Surface | None = None,
     ):
         # imports: -=-=-=-=-
         global ItemClass
@@ -59,33 +54,25 @@ class Game:
         ItemClass = Item
         # imports: -=-=-=-=-
 
-        self.my_instance = Game.instances_count
-        Game.instances[self.my_instance] = self
-        Game.instances_count += 1
-        Game.current_instance = self.my_instance
+        Game.instance = self
 
-        if screen is None:
-            self.screen: pg.Surface = pg.display.set_mode(screen_resolution, screen_flag)
-        else:
-            self.screen: pg.Surface = screen
-
-        Game.events = pg.event.get()
+        rl.init_window(screen_resolution[0], screen_resolution[1], game_name)
+        rl.set_exit_key(rl.KeyboardKey.KEY_NULL)
+        rl.set_target_fps(60)
 
         self.show_fps = show_fps
         self.game_name = game_name
 
-        self.clock = pg.time.Clock()
-        self.time = pg.time.get_ticks()
-        self.last_time = pg.time.get_ticks()
+        self.time = rl.get_time() * 1000
+        self.last_time = rl.get_time() * 1000
         self.delta_time = 0
         self.run_time = 0
         self.scheduler = Scheduler(self)
+        self.current_level = "Name"
+        self.cameras: list[Camera] = []
         self.item_list: list[Item] = []
         self.to_init: list[Callable] = []
         self.new_game(start_level, supress=True)
-        # pg.mouse.set_visible
-
-        self.current_level = "Level_name"
 
     def new_game(self, level: str | ModuleType, supress=False):
         if type(level) == ModuleType:
@@ -114,28 +101,18 @@ class Game:
         return ItemClass(self)
 
     def update(self):
-        Game.events = pg.event.get()
-        for event in Game.events:
-            if event.type == pg.QUIT:  # or (event.type == pg.KEYDOWN and event.key == pg.k_ESCAPE):
-                pg.quit()
-                sys.exit()
+        rl.clear_background(rl.Color(30, 30, 30, 255))  # Cinza
 
-        #pg.image.save(self.screen, f"frames/screenshot_{self.time}.png")
-
-
-        pg.display.flip()
-        self.screen.fill((30, 30, 30))  # Cinza
-        self.clock.tick(1000) # Limitando a 30 FPS
         self.last_time = self.time
-        self.time = pg.time.get_ticks()
-        self.delta_time = (self.time - self.last_time) / 1000.0
+        self.time = rl.get_time() * 1000
+        self.delta_time = rl.get_frame_time()
         self.run_time += self.delta_time
 
         if self.show_fps:
-            pg.display.set_caption(f'{self.game_name}   FPS: {self.clock.get_fps():.0f}')
+            rl.set_window_title(f'{self.game_name}   FPS: {rl.get_fps()}')
 
     def run(self):
-        while True:
+        while not rl.window_should_close():
             self.update()
             try:
                 for function in self.to_init:
@@ -150,9 +127,16 @@ class Game:
                 self.scheduler.update()
             except NewGame:
                 pass
+
+            # Início do frame de renderização
+            rl.begin_drawing()
+            for camera in self.cameras:
+                camera.render()
+            rl.end_drawing()
+        rl.close_window()
 
     async def run_async(self):
-        while True:
+        while not rl.window_should_close():
             self.update()
             try:
                 for function in self.to_init:
@@ -168,13 +152,11 @@ class Game:
             except NewGame:
                 pass
 
+            rl.end_drawing()
             await asyncio.sleep(0)
-
+        rl.close_window()
 
     def run_once(self):
-        previous_instance: int = Game.current_instance
-        Game.current_instance = self.my_instance
-
         self.update()
         try:
             for function in self.to_init:
@@ -190,4 +172,4 @@ class Game:
         except NewGame:
             pass
 
-        Game.current_instance = previous_instance
+        rl.end_drawing()

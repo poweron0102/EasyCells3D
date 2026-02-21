@@ -1,7 +1,7 @@
 from .Component import Component, Item, Transform
-from .Camera import Camera
+from .Camera3D import Camera3D
 
 __all__ = [
-    'Camera',
+    'Camera3D',
     'Component', 'Item', 'Transform',
 ]

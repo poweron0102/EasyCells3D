@@ -3,7 +3,7 @@ import math
 import pygame as pg
 from EasyCells3D import Tick
 
-from EasyCells3D.Components import Component, Camera
+from EasyCells3D.Components import Component, Camera3D
 from EasyCells3D.Geometry import Vec3, Quaternion
 
 
@@ -13,7 +13,7 @@ class SpaceShip(Component):
     incluindo o controle de uma câmera seguidora.
     """
 
-    def __init__(self, camera: Camera, acceleration: float = 5.0, rotation_speed: float = 5.0,
+    def __init__(self, camera: Camera3D, acceleration: float = 5.0, rotation_speed: float = 5.0,
                  ship_turn_speed: float = 4.0, mouse_sensitivity: float = 0.15, damping: float = 0.98,
                  max_pitch_angle: float = 30.0, max_camera_angle: float = 25.0,
                  min_cam_dist: float = 5.0, max_cam_dist: float = 15.0):

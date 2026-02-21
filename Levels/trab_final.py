@@ -2,7 +2,7 @@ import pygame as pg
 import math
 
 from EasyCells3D import Game, Tick
-from EasyCells3D.Components import Camera, Item
+from EasyCells3D.Components import Camera3D, Item
 from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
 from EasyCells3D.Components.VoxelsHittable import VoxelsHittable
@@ -11,7 +11,7 @@ from EasyCells3D.Material import Material, Texture
 from UserComponents.ratating_obj import RotatingObj
 
 camera: Item
-camera_component: Camera
+camera_component: Camera3D
 
 def init(game: Game):
     global camera
@@ -19,7 +19,7 @@ def init(game: Game):
     camera = game.CreateItem()
     camera.AddComponent(FreeCam())
     camera_component = camera.AddComponent(
-        Camera(sky_box=Texture.get("sky1.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05))
+        Camera3D(sky_box=Texture.get("sky1.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05))
     )
 
 

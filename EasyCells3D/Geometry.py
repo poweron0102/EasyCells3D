@@ -331,24 +331,3 @@ class Quaternion:
     @staticmethod
     def identity():
         return Quaternion(1, 0, 0, 0)
-
-
-
-@dataclass
-class Ray:
-    origin: Vec3
-    direction: Vec3
-
-    dtype = ray_dtype
-
-    def point_at(self, t: float) -> Vec3:
-        return self.origin + self.direction * t
-    
-    def to_numpy(self):
-        return np.array((self.origin.to_numpy(), self.direction.to_numpy()), dtype=ray_dtype)
-
-
-class DeviceAllocation:
-    """
-    Typo de dado de memória na GPU.
-    """

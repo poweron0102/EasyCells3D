@@ -1,7 +1,7 @@
 import pygame as pg
 from enum import Enum
 
-from ..Components import Camera
+from ..Components import Camera3D
 from ..Components.Camera import Hittable
 from ..Components.Component import Transform
 from ..Geometry import Vec2
@@ -101,7 +101,7 @@ class UiComponent(Hittable):
         elif self.alignment == UiAlignment.GAME_SPACE:
             return Vec2(0, 0)
 
-    def draw_screen_space(self, cam_x: float, cam_y: float, scale: float, camera: Camera):
+    def draw_screen_space(self, cam_x: float, cam_y: float, scale: float, camera: Camera3D):
         position = self.transform.position + self.calculate_screen_offset()
         camera.screen.blit(
             self.image,
@@ -111,7 +111,7 @@ class UiComponent(Hittable):
             )
         )
 
-    def draw_world_space(self, cam_x: float, cam_y: float, scale: float, camera: Camera):
+    def draw_world_space(self, cam_x: float, cam_y: float, scale: float, camera: Camera3D):
         position = self.word_position * scale
         position.scale *= scale
 
