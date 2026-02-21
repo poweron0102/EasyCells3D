@@ -1,12 +1,16 @@
-import pygame as pg
-
-from EasyCells3D import Game
+from EasyCells3D import Game, Tick
 from EasyCells3D.Components import Camera, Item
 from EasyCells3D.Components.FreeCam import FreeCam
 from EasyCells3D.Components.SphereHittable import SphereHittable
-from EasyCells3D.Geometry import Vec3, Quaternion
-from EasyCells3D.Material import Material
+from EasyCells3D.Components.VoxelsHittable import VoxelsHittable
+from EasyCells3D.Geometry import Vec3
+from EasyCells3D.Material import Material, Texture
+from UserComponents.SpaceShip import SpaceShip
 from UserComponents.ratating_obj import RotatingObj
+
+import pygame as pg
+
+camera: Item
 
 
 def init(game: Game):
@@ -26,18 +30,15 @@ def init(game: Game):
         planet.AddComponent(RotatingObj(speed=rotation_speed * speed_scale))
         return planet
 
+    nave = game.CreateItem()
     # --- Câmera e Controles ---
+    global camera
+    #camera = nave.CreateChild()
     camera = game.CreateItem()
-    # A luz ambiente é baixa para que o Sol seja a principal fonte de luz.
-    camera.AddComponent(Camera(vfov=60, use_cuda=True, ambient_light=Vec3(0.05, 0.05, 0.05)))
-    # Posição inicial da câmera ajustada para ver todo o sistema
-    camera.transform.position = Vec3(0, 15, -40)
-    camera.transform.forward = Vec3(0, 0, 1)
     camera.AddComponent(FreeCam())
-
-    # Centraliza e oculta o cursor do mouse para melhor controle da câmera
-    pg.mouse.set_visible(False)
-    pg.event.set_grab(True)
+    camera_component = camera.AddComponent(
+        Camera(sky_box=Texture.get("space.jpg"), vfov=60, ambient_light=Vec3(0.05, 0.05, 0.05))
+    )
 
     # --- Criação dos Corpos Celestes ---
 
@@ -65,8 +66,33 @@ def init(game: Game):
     create_planet("Neptune", 0.9, "Texture/wool_colored_light_blue.png", 35, 5 * speed_scale, 85 * speed_scale)
 
     # 3. Lua (continua como filha da Terra)
-    create_planet("Moon", 0.15, "Texture/stone_andesite_smooth.png", 1.5, 120 * speed_scale, 0).SetParent(earth)
+    lua = create_planet("Moon", 0.15, "Texture/stone_andesite_smooth.png", 1.5, 120 * speed_scale, 0)
+    lua.SetParent(earth)
+    lua.transform.scale = Vec3(3, 0.5, 1)
 
+    # --- Naves ---
+    #nave = game.CreateItem()
+    nave.AddComponent(VoxelsHittable("SpaceShips/DualStriker.vox"))
+    nave.transform.position = Vec3(0, 5, 0)
+    nave.transform.scale = Vec3(2, 2, 2)
+    # Adiciona o componente de controle da nave e passa a câmera para ele
+    #nave.AddComponent(SpaceShip(camera_component))
+    # nave.AddChild(camera)
+    camera.transform.position = Vec3(0, 3, 3)
+    camera.transform.forward = Vec3(0, -0.5, -1)
 
+    nave = game.CreateItem()
+    nave.AddComponent(VoxelsHittable("SpaceShips/UltravioletIntruder.vox"))
+    nave.transform.position += Vec3(0, 5, 10)
+    nave.transform.scale = Vec3(5, 5, 5)
+
+tick = Tick(0.1)
 def loop(game: Game):
-    pass
+    if pg.key.get_pressed()[pg.K_b]:
+        if tick():
+            camera.GetComponent(Camera).max_bounces += 1
+            print(f"Max Bounces: {camera.GetComponent(Camera).max_bounces}")
+    elif pg.key.get_pressed()[pg.K_n]:
+        if tick():
+            camera.GetComponent(Camera).max_bounces = max(0, camera.GetComponent(Camera).max_bounces - 1)
+            print(f"Max Bounces: {camera.GetComponent(Camera).max_bounces}")

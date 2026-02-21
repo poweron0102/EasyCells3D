@@ -169,11 +169,11 @@ class Transform:
     """
     Global: 'Transform'
 
-    position: Vec3[float]
+    position: Vec3
     rotation: Quaternion
-    scale: Vec3[float]
+    scale: Vec3
 
-    def __init__(self, position: Vec3[float] = None, rotation: Quaternion = None, scale: Vec3[float] = None):
+    def __init__(self, position: Vec3 = None, rotation: Quaternion = None, scale: Vec3 = None):
         self.position = position if position is not None else Vec3(0.0, 0.0, 0.0)
         self.rotation = rotation if rotation is not None else Quaternion()
         self.scale = scale if scale is not None else Vec3(1.0, 1.0, 1.0)
@@ -224,7 +224,7 @@ class Transform:
         Transform.Global = self.ToGlobal()
 
     @staticmethod
-    def _get_rotation_from_direction(v_from: Vec3[float], value: Vec3[float], fallback_axis: Vec3[float]) -> Quaternion:
+    def _get_rotation_from_direction(v_from: Vec3, value: Vec3, fallback_axis: Vec3) -> Quaternion:
         """Calcula a rotação necessária para alinhar v_from com value."""
         if value.magnitude() == 0:
             return Quaternion()
@@ -248,7 +248,7 @@ class Transform:
         return self.rotation.rotate_vector(Vec3(0.0, 0.0, -1.0)).normalize()
 
     @forward.setter
-    def forward(self, value: Vec3[float]):
+    def forward(self, value: Vec3):
         """
         Define a rotação do transform para que seu vetor 'forward' aponte na direção de 'value'.
         Isso recalcula toda a rotação.
@@ -263,7 +263,7 @@ class Transform:
         return self.rotation.rotate_vector(Vec3(0.0, 1.0, 0.0)).normalize()
 
     @up.setter
-    def up(self, value: Vec3[float]):
+    def up(self, value: Vec3):
         """
         Define a rotação do transform para que seu vetor 'up' aponte na direção de 'value'.
         Isso recalcula toda a rotação.
@@ -278,7 +278,7 @@ class Transform:
         return self.rotation.rotate_vector(Vec3(1.0, 0.0, 0.0)).normalize()
 
     @right.setter
-    def right(self, value: Vec3[float]):
+    def right(self, value: Vec3):
         """
         Define a rotação do transform para que seu vetor 'right' aponte na direção de 'value'.
         Isso recalcula toda a rotação.
