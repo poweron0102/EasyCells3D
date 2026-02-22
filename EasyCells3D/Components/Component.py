@@ -3,7 +3,9 @@ import traceback
 from typing import TYPE_CHECKING
 from typing import Type
 
-from ..Geometry import Vec3, Quaternion
+import raylibpy as rl
+
+from ..Geometry import Vec3, Quaternion, Vec2
 from ..NewGame import NewGame
 
 if TYPE_CHECKING:
@@ -169,9 +171,57 @@ class Transform:
     """
     Global: 'Transform'
 
-    position: Vec3
-    rotation: Quaternion
-    scale: Vec3
+    _position: Vec3
+
+    @property
+    def position(self):
+        return self._position
+
+    @property
+    def positionVec2(self):
+        return Vec2(self.position.x, self.position.y)
+
+    @positionVec2.setter
+    def positionVec2(self, value: Vec2):
+        self.position = Vec3(value.x, value.y, self._position.z)
+
+    @position.setter
+    def position(self, value: Vec3 | Vec2):
+        if isinstance(value, Vec2):
+            value = Vec3(value.x, value.y, self._position.z)
+        self._position = value
+
+    @property
+    def x(self):
+        return self._position.x
+
+    @x.setter
+    def x(self, value):
+        self._position.x = value
+
+    @property
+    def y(self):
+        return self._position.y
+
+    @y.setter
+    def y(self, value):
+        self._position.y = value
+
+    @property
+    def z(self):
+        return self._position.z
+
+    @z.setter
+    def z(self, value):
+        self._position.z = value
+
+    @property
+    def angle(self):
+        return math.degrees(self.rotation.to_euler_angles().z)
+
+    @angle.setter
+    def angle(self, value):
+        self.rotation = Quaternion.from_axis_angle(Vec3(0.0, 0.0, 1.0), math.radians(value))
 
     def __init__(self, position: Vec3 = None, rotation: Quaternion = None, scale: Vec3 = None):
         self.position = position if position is not None else Vec3(0.0, 0.0, 0.0)
@@ -222,6 +272,13 @@ class Transform:
 
     def SetGlobal(self):
         Transform.Global = self.ToGlobal()
+
+    def to_raylib(self) -> rl.Transform:
+        return rl.Transform(
+            self.position.to_raylib(),
+            self.rotation.to_raylib(),
+            self.scale.to_raylib()
+        )
 
     @staticmethod
     def _get_rotation_from_direction(v_from: Vec3, value: Vec3, fallback_axis: Vec3) -> Quaternion:

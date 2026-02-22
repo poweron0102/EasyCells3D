@@ -1,47 +1,90 @@
 import ipaddress
-from enum import Enum
+from enum import Enum, auto
 from functools import wraps
-from typing import Callable, Any
-
-from numpy.compat import unicode
+from typing import Callable
+from weakref import WeakValueDictionary
 
 from EasyCells3D.Components.Component import Component
-from EasyCells3D.Network import NetworkServer, NetworkClient
+from EasyCells3D.NetworkTCP import NetworkServerTCP, NetworkClientTCP
+from EasyCells3D.NetworkUDP import NetworkServerUDP, NetworkClientUDP
+
+# --- Constantes de Protocolo ---
+OP_RPC = 1
+OP_VAR = 2
+
+# Sub-operações para Variáveis
+VAR_SET = 1
+VAR_GET = 2
+
+# ID reservado para RPCs estáticos/globais
+STATIC_NET_ID = 0
+
+
+class Protocol(Enum):
+    TCP = auto()
+    UDP = auto()
 
 
 class SendTo(Enum):
-    ALL = 0
-    SERVER = 1
-    CLIENTS = 2
-    OWNER = 3
-    NOT_ME = 4
+    ALL = 0  # Envia para todos (incluindo eu, se for Server)
+    SERVER = 1  # Envia para o Server
+    CLIENTS = 2  # Server envia para todos os clientes
+    OWNER = 3  # Envia apenas para o dono do objeto
+    NOT_ME = 4  # Envia para todos, exceto quem enviou
 
 
-def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True):
+def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Protocol = Protocol.TCP):
+    """
+    Decorador que suporta métodos de instância (NetworkComponent),
+    métodos estáticos (@staticmethod) e funções livres.
+    Agora suporta escolha de protocolo (TCP ou UDP).
+    """
+
     def decorator(func: Callable):
+        if func.__qualname__ != func.__name__:
+            pass
+
         @wraps(func)
         def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
+            instance = None
+            if args and isinstance(args[0], NetworkComponent):
+                instance = args[0]
 
-        # Attach metadata to the function
-        wrapper._rpc_metadata = {
+            # --- Caminho de Instância ---
+            if instance:
+                if not getattr(instance, "_is_executing_rpc", False):
+                    # Passa o protocolo definido para o send_rpc
+                    instance.send_rpc(func.__name__, args[1:], send_to, protocol)
+
+                    if NetworkManager.instance.is_server and send_to == SendTo.ALL:
+                        return func(instance, *args[1:], **kwargs)
+                    return None
+
+                return func(instance, *args[1:], **kwargs)
+
+            # --- Caminho Estático / Função Livre ---
+            else:
+                static_comp = NetworkComponent.get_static_instance()
+
+                if func.__name__ not in NetworkComponent._static_rpcs:
+                    NetworkComponent._static_rpcs[func.__name__] = func
+
+                if not getattr(static_comp, "_is_executing_rpc", False):
+                    static_comp.send_rpc(func.__name__, args, send_to, protocol)
+
+                    if NetworkManager.instance.is_server and send_to == SendTo.ALL:
+                        return func(*args, **kwargs)
+                    return None
+
+                return func(*args, **kwargs)
+
+        wrapper._rpc_config = {
             "send_to": send_to,
             "require_owner": require_owner,
-            "is_static": isinstance(func, staticmethod),
+            "protocol": protocol  # Salva a config do protocolo
         }
-        if isinstance(func, staticmethod):
-            if func.__name__ in NetworkComponent.Rpcs:
-                print(
-                    f"RPC function '{func.__name__}' already registered.\n"
-                    "Two RPC functions cannot have the same name.\n"
-                    "Evem if they are in different classes."
-                )
-            NetworkComponent.Rpcs[func.__name__] = wrapper
 
-            def new_func(*args, attr_name=func.__name__):
-                return NetworkComponent.instance.invoke_rpc(attr_name, *args)
-
-            return new_func
+        NetworkComponent._static_rpcs[func.__name__] = wrapper
 
         return wrapper
 
@@ -49,330 +92,347 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True):
 
 
 class NetworkComponent(Component):
-    instance: 'NetworkComponent'
-    Rpcs: dict[str, Callable] = {}
-    NetworkComponents: dict[int, "NetworkComponent"] = {}
-
-    @staticmethod
-    def GetFunction(name: str, identifier: int = None):
-        if f"{name}:{identifier}" in NetworkComponent.Rpcs:
-            return NetworkComponent.Rpcs[f"{name}:{identifier}"]
-        elif name in NetworkComponent.Rpcs:
-            return NetworkComponent.Rpcs[name]
-        else:
-            return None
+    _active_components: dict[int, "NetworkComponent"] = {}
+    _static_instance: "NetworkComponent" = None
+    _static_rpcs: dict[str, Callable] = {}
 
     def __init__(self, identifier: int, owner: int):
         self.identifier = identifier
         self.owner = owner
+        self._is_executing_rpc = False
 
-        if identifier is None or owner is None:
-            return
-
-        NetworkComponent.NetworkComponents[identifier] = self
+        if identifier == STATIC_NET_ID:
+            NetworkComponent._static_instance = self
 
     def init(self):
-        self.register_rpcs()
+        if self.identifier is not None:
+            NetworkComponent._active_components[self.identifier] = self
 
-    def register_rpcs(self):
-        """
-        Automatically register methods decorated with @Rpc.
-        """
-        for attr_name in dir(self):
-            attr = getattr(self, attr_name)
-            if callable(attr) and hasattr(attr, "_rpc_metadata"):
+    @classmethod
+    def get_static_instance(cls):
+        if cls._static_instance is None:
+            cls._static_instance = NetworkComponent(STATIC_NET_ID, 0)
+            cls._active_components[STATIC_NET_ID] = cls._static_instance
+        return cls._static_instance
 
-                def new_func(*args, attr_name=attr_name):
-                    return self.invoke_rpc(attr_name, *args)
+    def on_destroy(self):
+        if self.identifier in NetworkComponent._active_components:
+            del NetworkComponent._active_components[self.identifier]
+        self.on_destroy = lambda: None
 
-                if attr._rpc_metadata["is_static"]:
-                    continue
-                else:
-                    NetworkComponent.Rpcs[f"{attr_name}:{self.identifier}"] = attr
-                    setattr(self, attr_name, new_func)
+    def send_rpc(self, method_name: str, args: tuple, send_to: SendTo, protocol: Protocol):
+        """Encapsula e envia o pacote usando o protocolo especificado."""
+        packet = (OP_RPC, self.identifier, method_name, args)
+        nm = NetworkManager.instance
 
-    def invoke_rpc(self, func_name: str, *args):
-        """
-        Call an RPC function locally or send the call to the network manager.
-        """
-        method = f"{func_name}:{self.identifier}" in NetworkComponent.Rpcs
-        static_method = func_name in NetworkComponent.Rpcs
-        if method or static_method:
-            if method:
-                func = NetworkComponent.Rpcs[f"{func_name}:{self.identifier}"]
-            else:
-                func = NetworkComponent.Rpcs[func_name]
-            metadata = getattr(func, "_rpc_metadata", {})
-            send_to = metadata.get("send_to", SendTo.ALL)
-            require_owner = metadata.get("require_owner", True)
-
-            if require_owner and not NetworkManager.instance.is_server and (
-                    self.owner != NetworkManager.instance.id and self.owner is not None):
-                raise PermissionError("This RPC requires ownership.")
-
-            # Determine where to send the RPC
-            if send_to == SendTo.ALL:
-                self.send_rpc_to_all(func_name, *args)
-            elif send_to == SendTo.SERVER:
-                self.send_rpc_to_server(func_name, *args)
-            elif send_to == SendTo.CLIENTS:
-                self.send_rpc_to_clients(func_name, *args)
-            elif send_to == SendTo.OWNER and self.owner:
-                self.send_rpc_to_client(self.owner, func_name, *args)
+        if nm.is_server:
+            if send_to == SendTo.ALL or send_to == SendTo.CLIENTS:
+                nm.broadcast(packet, protocol)
             elif send_to == SendTo.NOT_ME:
-                self.send_rpc_to_not_me(func_name, *args)
+                nm.broadcast(packet, protocol)
+            elif send_to == SendTo.OWNER and self.owner != 0:
+                nm.send_to_client(packet, self.owner, protocol)
         else:
-            raise ValueError(f"RPC function '{func_name}:{self.identifier}' or '{func_name}' not registered.")
+            nm.send_to_server(packet, protocol)
 
-    @staticmethod
-    def CallRpc_on_client_id(func_name: str, identifier: int | None, client_id: int, *args):
-        """
-        Call an RPC function on a specific client.
-        Only works on the server.
-        if the identifier is None, this RPC needs to be a static method.
-        """
-        # if not NetworkManager.instance.is_server:
-        #     return
-        NetworkManager.instance.network_server.send(
-            ("Rpc", (func_name, identifier, args)),
-            client_id
-        )
+    def handle_incoming_rpc(self, method_name: str, args: tuple, sender_id: int):
+        """Recebe o pacote da rede, verifica segurança e executa."""
+        method = None
+        config = None
 
-    def send_rpc_to_server(self, func_name: str, *args):
-        if NetworkManager.instance.is_server:
-            NetworkComponent.GetFunction(func_name, self.identifier)(*args)
+        if self.identifier == STATIC_NET_ID:
+            if method_name in NetworkComponent._static_rpcs:
+                original_func = NetworkComponent._static_rpcs[method_name]
+                method = original_func
+                config = method._rpc_config
+            else:
+                print(f"Erro: RPC Estático '{method_name}' não registrado.")
+                return
         else:
-            data = ("Rpc", (func_name, self.identifier, args))
-            NetworkManager.instance.network_client.send(data)
+            if not hasattr(self, method_name):
+                print(f"Erro: RPC '{method_name}' não encontrado no objeto {self.identifier}")
+                return
+            method = getattr(self, method_name)
+            if hasattr(method, "_rpc_config"):
+                config = method._rpc_config
 
-    def send_rpc_to_clients(self, func_name: str, *args):
-        if NetworkManager.instance.is_server:
-            NetworkManager.instance.network_server.broadcast(("Rpc", (func_name, self.identifier, args)))
-        else:
-            data = ("RpcT", (func_name, self.identifier, args))
-            NetworkManager.instance.network_client.send(data)
-
-    def send_rpc_to_client(self, client_id: int, func_name: str, *args):
-        if NetworkManager.instance.is_server:
-            data = ("Rpc", (func_name, self.identifier, args))
-            NetworkManager.instance.network_server.send(data, client_id)
-        else:
-            data = ("RpcT", (func_name, self.identifier, args))
-            NetworkManager.instance.network_client.send(data)
-
-    def send_rpc_to_all(self, func_name: str, *args):
-        self.send_rpc_to_clients(func_name, *args)
-        if NetworkManager.instance.is_server:
-            NetworkComponent.GetFunction(func_name, self.identifier)(*args)
-
-    def send_rpc_to_not_me(self, func_name: str, *args):
-        if NetworkManager.instance.is_server:
-            self.send_rpc_to_clients(func_name, *args)
-        else:
-            data = ("RpcT", (func_name, self.identifier, args))
-            NetworkManager.instance.network_client.send(data)
-
-    @staticmethod
-    def rpc_handler_server(client_id: int, func_name: str, obj_identifier: int, args: tuple):
-        func = NetworkComponent.GetFunction(func_name, obj_identifier)
-        requer_owner = func._rpc_metadata.get("require_owner", True)
-
-        if requer_owner and NetworkComponent.NetworkComponents[obj_identifier].owner != client_id:
-            print("This RPC requires ownership.")
+        if method is None or config is None:
             return
 
-        func(*args)
+        if NetworkManager.instance.is_server and config["require_owner"]:
+            if sender_id != self.owner:
+                print(f"Negado: RPC {method_name} no objeto {self.identifier} exige permissão de dono.")
+                return
 
-    @staticmethod
-    def rpc_handler_client(func_name: str, obj_identifier: int, args: tuple):
-        func = NetworkComponent.GetFunction(func_name, obj_identifier)
-        if func is not None:
-            func(*args)
-        else:
-            pass
-            # print((func_name, obj_identifier, args))
+        try:
+            self._is_executing_rpc = True
+            if self.identifier == STATIC_NET_ID:
+                method(*args)
+            else:
+                method(*args)
+        finally:
+            self._is_executing_rpc = False
 
-    @staticmethod
-    def rpct_handler_server(client_id: int, func_name: str, obj_identifier: int, args: tuple):
-        func = NetworkComponent.GetFunction(func_name, obj_identifier)
-        requer_owner = func._rpc_metadata.get("require_owner", True)
-        is_static = func._rpc_metadata.get("is_static", False)
+        # Se for Server, retransmite se necessário, respeitando o protocolo original
+        if NetworkManager.instance.is_server:
+            # Usa o protocolo definido na config do RPC para retransmitir
+            protocol = config.get("protocol", Protocol.TCP)
+            self._server_relay_rpc(method_name, args, config["send_to"], sender_id, protocol)
 
-        if requer_owner and NetworkComponent.NetworkComponents[obj_identifier].owner != client_id:
-            print("This RPC requires ownership.")
-            return
+    def _server_relay_rpc(self, method_name: str, args: tuple, send_to: SendTo, sender_id: int, protocol: Protocol):
+        """Lógica de retransmissão do servidor (Relay)."""
+        packet = (OP_RPC, self.identifier, method_name, args)
+        nm = NetworkManager.instance
 
-        send_to = func._rpc_metadata.get("send_to", SendTo.ALL)
-
-        if send_to == SendTo.ALL:
-            NetworkManager.instance.network_server.broadcast(("Rpc", (func_name, obj_identifier, args)))
-            func(*args)
-        elif send_to == SendTo.CLIENTS:
-            NetworkManager.instance.network_server.broadcast(("Rpc", (func_name, obj_identifier, args)))
-        elif send_to == SendTo.OWNER:
-            NetworkManager.instance.network_server.send(
-                ("Rpc", (func_name, obj_identifier, args)),
-                NetworkComponent.NetworkComponents[obj_identifier].owner
-            )
+        if send_to == SendTo.ALL or send_to == SendTo.CLIENTS:
+            nm.broadcast(packet, protocol)
         elif send_to == SendTo.NOT_ME:
-            for i in range(1, len(NetworkManager.instance.network_server.clients)):
-                if i != client_id:
-                    NetworkManager.instance.network_server.send(("Rpc", (func_name, obj_identifier, args)), i)
-            func(*args)
+            # Broadcast manual excluindo o sender
+            clients = nm.tcp_server.clients if protocol == Protocol.TCP else nm.udp_server.clients
+            for cid in range(1, len(clients)):
+                if cid != sender_id:
+                    nm.send_to_client(packet, cid, protocol)
+        elif send_to == SendTo.OWNER and self.owner != sender_id:
+            nm.send_to_client(packet, self.owner, protocol)
 
-    @staticmethod
-    def rpct_handler_client(func_name: str, obj_identifier: int, args: tuple):
-        print("Received RPCT and I'm a client, this should not happen.")
 
-    ping_time: float
+class NetworkVariable[T]:
+    """
+    Variável sincronizada automaticamente pela rede.
+    Por padrão, variáveis sempre usam TCP para garantir integridade.
+    """
+    _active_variables: WeakValueDictionary[int, 'NetworkVariable'] = WeakValueDictionary()
+
+    def __init__(self, value: T, identifier: int, owner: int, require_owner: bool = True):
+        self.var_id = identifier
+        self.owner = owner
+        self.require_owner = require_owner
+        self._value = value
+
+        NetworkVariable._active_variables[identifier] = self
+
+        if not NetworkManager.instance.is_server:
+            packet = (OP_VAR, self.var_id, VAR_GET, ())
+            # Força TCP para variáveis
+            NetworkManager.instance.send_to_server(packet, Protocol.TCP)
+
+    @property
+    def value(self) -> T:
+        return self._value
+
+    @value.setter
+    def value(self, new_value: T):
+        self._value = new_value
+        packet = (OP_VAR, self.var_id, VAR_SET, (new_value,))
+        nm = NetworkManager.instance
+
+        if nm.is_server:
+            nm.broadcast(packet, Protocol.TCP)
+        else:
+            nm.send_to_server(packet, Protocol.TCP)
+
+    def handle_network_update(self, sub_op: int, args: tuple, sender_id: int):
+        nm = NetworkManager.instance
+
+        if sub_op == VAR_SET:
+            new_val = args[0]
+            if nm.is_server:
+                if self.require_owner and sender_id != self.owner:
+                    return
+
+                self._value = new_val
+                packet = (OP_VAR, self.var_id, VAR_SET, (new_val,))
+
+                # Relay via TCP para garantir entrega
+                clients = nm.tcp_server.clients
+                for cid in range(1, len(clients)):
+                    if cid != sender_id:
+                        nm.send_to_client(packet, cid, Protocol.TCP)
+            else:
+                self._value = new_val
+
+        elif sub_op == VAR_GET:
+            if nm.is_server:
+                packet = (OP_VAR, self.var_id, VAR_SET, (self._value,))
+                nm.send_to_client(packet, sender_id, Protocol.TCP)
 
 
 class NetworkManager(Component):
     instance: 'NetworkManager' = None
-    on_data_received: dict[str, Callable] = {}
 
     def __init__(
             self,
             ip: str,
             port: int,
             is_server: bool,
-            ip_version: int = None,
-            connect_callback: Callable[[int], None] = None,
+            connect_callback: Callable[[int], None] = None
     ):
+        NetworkManager.instance = self
+        self.is_server = is_server
         self.ip = ip
         self.port = port
-        self.is_server = is_server
-        NetworkManager.instance = self
+        self.id = 0 if is_server else -1
 
         self.connect_callbacks: list[Callable[[int], None]] = []
         if connect_callback is not None:
             self.connect_callbacks.append(connect_callback)
 
-        if ip_version is None:
-            if ip == "localhost":
-                ip_version = 4
-            else:
-                ip_version = ipaddress.ip_address(unicode(ip)).version
-
-        if is_server:
-            self.network_server = NetworkServer(ip, port, ip_version, self.server_callback)
-            self.id = 0
-            self.loop = self.server_loop
-            NetworkManager.on_data_received["Rpc"] = NetworkComponent.rpc_handler_server
-            NetworkManager.on_data_received["RpcT"] = NetworkComponent.rpct_handler_server
-            NetworkManager.on_data_received["VarS"] = NetworkVariable.handle_variable_set_server
-            NetworkManager.on_data_received["VarG"] = NetworkVariable.handle_variable_get_server
+        if ip == "localhost":
+            ip_version = 4
         else:
-            self.network_client = NetworkClient(ip, port, ip_version, self.client_callback)
-            self.loop = self.client_loop
-            NetworkManager.on_data_received["Rpc"] = NetworkComponent.rpc_handler_client
-            NetworkManager.on_data_received["RpcT"] = NetworkComponent.rpct_handler_client
-            NetworkManager.on_data_received["VarS"] = NetworkVariable.handle_variable_set_client
+            try:
+                ip_version = ipaddress.ip_address(ip).version
+            except ValueError:
+                ip_version = 4
 
-    def client_callback(self, client_id: int):
+        # Inicializa AMBOS os protocolos
+        if self.is_server:
+            self.tcp_server = NetworkServerTCP(ip, port, ip_version, self.server_callback_tcp)
+            self.udp_server = NetworkServerUDP(ip, port, ip_version, self.server_callback_udp)
+        else:
+            self.tcp_client = NetworkClientTCP(ip, port, ip_version, self.client_callback_tcp)
+            self.udp_client = NetworkClientUDP(ip, port, ip_version, self.client_callback_udp)
+
+        self._tcp_connected = False
+        self._udp_connected = False
+
+    # --- Callbacks ---
+    # Nota: Assumimos que o TCP é a conexão "Mestre" para definir o ID e disparar o callback do usuário
+
+    def client_callback_tcp(self, client_id: int):
         self.id = client_id
+        self._tcp_connected = True
+        self._check_connection_complete(client_id)
+
+    def client_callback_udp(self, client_id: int):
+        self._udp_connected = True
+        # Idealmente o ID do UDP deve bater com o do TCP.
+        # Como as classes são separadas, esperamos que a ordem de conexão seja consistente.
+        pass
+
+    def _check_connection_complete(self, client_id):
+        # Dispara o callback do usuário quando o TCP conecta (UDP pode vir depois ou falhar silenciosamente)
+        if self._tcp_connected:
+            for call in self.connect_callbacks:
+                call(client_id)
+
+    def server_callback_tcp(self, client_id: int):
+        # Notifica nova conexão TCP
         for call in self.connect_callbacks:
             call(client_id)
 
-    def server_callback(self, client_id: int):
-        for call in self.connect_callbacks:
-            call(client_id)
+    def server_callback_udp(self, client_id: int):
+        pass
+
+    # --- Métodos de Envio Abstraídos ---
+
+    def send_to_server(self, packet: object, protocol: Protocol):
+        """Envia pacote para o servidor usando o protocolo escolhido."""
+        if self.is_server:
+            return  # Servidor não envia para servidor
+
+        if protocol == Protocol.TCP:
+            self.tcp_client.send(packet)
+        else:
+            self.udp_client.send(packet)
+
+    def send_to_client(self, packet: object, client_id: int, protocol: Protocol):
+        """Envia pacote para um cliente específico."""
+        if not self.is_server:
+            return
+
+        if protocol == Protocol.TCP:
+            self.tcp_server.send(packet, client_id)
+        else:
+            self.udp_server.send(packet, client_id)
+
+    def broadcast(self, packet: object, protocol: Protocol):
+        """Envia para todos os clientes."""
+        if not self.is_server:
+            return
+
+        if protocol == Protocol.TCP:
+            self.tcp_server.broadcast(packet)
+        else:
+            self.udp_server.broadcast(packet)
+
+    # --- Loop ---
 
     def init(self):
-        self.item.destroy_on_load = False
+        if hasattr(self.item, "destroy_on_load"):
+            self.item.destroy_on_load = False
 
-    def server_loop(self):
-        for i in range(1, len(self.network_server.clients)):
-            data = self.network_server.read(i)
-            if data:
-                self.handle_data(data, i)
-
-    def client_loop(self):
-        data = self.network_client.read()
-        if data:
-            self.handle_client(data)
-
-    def handle_data(self, data: Any, client_id: int):
-        operation, data = data
-
-        if operation in self.on_data_received:
-            self.on_data_received[operation](client_id, *data)
-
-    def handle_client(self, data: object):
-        operation, data = data
-
-        if operation in NetworkManager.on_data_received:
-            self.on_data_received[operation](*data)
-
-
-class NetworkVariable[T]:
-    variables: dict[int, 'NetworkVariable'] = {}
-
-    _value: T
-
-    def __init__(self, value: T, identifier: int, owner: int, require_owner: bool = True):
-        """
-        A variable that can be synchronized over the network.
-        """
-
-        self.identifier = identifier
-        self.owner = owner
-
-        self.require_owner = require_owner
-
-        NetworkVariable.variables[identifier] = self
-
-        self.value = value
-
-        if not NetworkManager.instance.is_server:
-            NetworkManager.instance.network_client.send(
-                ("VarG", (identifier,))
-            )
-
-    @property
-    def value(self) -> T:
-        return self._value
-
-    def set_Server(self, value: T):
-        self._value = value
-        for i in range(1, len(NetworkManager.instance.network_server.clients)):
-            NetworkManager.instance.network_server.send(("VarS", (self.identifier, value)), i)
-
-    def set_Client(self, value: T):
-        self._value = value
-        NetworkManager.instance.network_client.send(("VarS", (self.identifier, value)))
-
-    @value.setter
-    def value(self, value):
-        if NetworkManager.instance.is_server:
-            self.set_Server(value)
+    def loop(self):
+        if self.is_server:
+            self._server_loop()
         else:
-            self.set_Client(value)
+            self._client_loop()
+
+    def _server_loop(self):
+        # Ler TCP
+        clients_tcp = self.tcp_server.clients
+        for client_id in range(1, len(clients_tcp)):
+            while data := self.tcp_server.read(client_id):
+                self.process_packet(data, client_id)
+
+        # Ler UDP
+        clients_udp = self.udp_server.clients
+        for client_id in range(1, len(clients_udp)):
+            while data := self.udp_server.read(client_id):
+                self.process_packet(data, client_id)
+
+    def _client_loop(self):
+        # Ler TCP
+        while data := self.tcp_client.read():
+            self.process_packet(data, 0)
+
+        # Ler UDP
+        while data := self.udp_client.read():
+            self.process_packet(data, 0)
+
+    def call_rpc_on_client(self, client_id: int, rpc_method: Callable, *args):
+        """Invoca um RPC num cliente específico. Tenta detectar protocolo do método."""
+        if not self.is_server:
+            return
+
+        target_id = STATIC_NET_ID
+        method_name = rpc_method.__name__
+        protocol = Protocol.TCP  # Default seguro
+
+        # Tenta pegar a config do wrapper
+        if hasattr(rpc_method, "_rpc_config"):
+            protocol = rpc_method._rpc_config.get("protocol", Protocol.TCP)
+
+        if hasattr(rpc_method, "__self__") and isinstance(rpc_method.__self__, NetworkComponent):
+            target_id = rpc_method.__self__.identifier
+
+        packet = (OP_RPC, target_id, method_name, args)
+        self.send_to_client(packet, client_id, protocol)
 
     @staticmethod
-    def handle_variable_set_server(client_id: int, identifier: int, value: T):
-        if NetworkVariable.variables[identifier].require_owner:
-            if NetworkVariable.variables[identifier].owner != client_id:
-                print("This variable requires ownership.")
-                return
-        NetworkVariable.variables[identifier]._value = value
+    def process_packet(data: tuple, sender_id: int):
+        try:
+            op_code, target_id, payload, args = data
 
-        for i in range(1, len(NetworkManager.instance.network_server.clients)):
-            if i != client_id:
-                NetworkManager.instance.network_server.send(("VarS", (identifier, value)), i)
+            if op_code == OP_RPC:
+                component = NetworkComponent._active_components.get(target_id)
+                if component:
+                    component.handle_incoming_rpc(payload, args, sender_id)
 
-    @staticmethod
-    def handle_variable_set_client(identifier: int, value: T):
-        NetworkVariable.variables[identifier]._value = value
+            elif op_code == OP_VAR:
+                variable = NetworkVariable._active_variables.get(target_id)
+                if variable:
+                    variable.handle_network_update(payload, args, sender_id)
 
-    @staticmethod
-    def handle_variable_get_server(client_id: int, identifier: int):
-        NetworkManager.instance.network_server.send(
-            ("VarS", (identifier, NetworkVariable.variables[identifier].value)
-             ),
-            client_id
-        )
+        except ValueError:
+            print("Pacote malformado recebido.")
+        except Exception as e:
+            print(f"Erro processando pacote: {e}")
 
-
-network_component_instance = NetworkComponent(None, None)
-NetworkComponent.instance = network_component_instance
+    def on_destroy(self):
+        if self.is_server:
+            self.tcp_server.close()
+            self.udp_server.close()
+        else:
+            self.tcp_client.close()
+            self.udp_client.close()

@@ -1,6 +1,7 @@
 import math
 from dataclasses import dataclass
 import numpy as np
+import raylibpy as rl
 
 
 # typedef struct { float x; float y; } Vec2f;
@@ -107,6 +108,9 @@ class Vec2:
     def to_numpy(self):
         return np.array((self.x, self.y), dtype=vec2f_dtype)
 
+    def to_raylib(self) -> rl.Vector2:
+        return rl.Vector2(self.x, self.y)
+
 
 
 @dataclass
@@ -137,10 +141,10 @@ class Vec3:
             self.x * other.y - self.y * other.x
         )
 
-    def __add__(self, other):
+    def __add__(self, other: Vec3):
         return Vec3(self.x + other.x, self.y + other.y, self.z + other.z)
 
-    def __sub__(self, other):
+    def __sub__(self, other: Vec3):
         return Vec3(self.x - other.x, self.y - other.y, self.z - other.z)
 
     def __mul__(self, other: float):
@@ -172,6 +176,9 @@ class Vec3:
 
     def to_numpy(self):
         return np.array((self.x, self.y, self.z), dtype=vec3f_dtype)
+
+    def to_raylib(self) -> rl.Vector3:
+        return rl.Vector3(self.x, self.y, self.z)
 
     def lerp(self, target: 'Vec3', t: float) -> 'Vec3':
         """Linear interpolation entre self e target (t em [0,1])."""
@@ -331,3 +338,6 @@ class Quaternion:
     @staticmethod
     def identity():
         return Quaternion(1, 0, 0, 0)
+
+    def to_raylib(self) -> rl.Quaternion:
+        return rl.Quaternion(self.x, self.y, self.z, self.w)

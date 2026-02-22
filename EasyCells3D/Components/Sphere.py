@@ -11,10 +11,10 @@ class Sphere(Renderable3D):
     model: rl.Model = None
     texture: rl.Texture2D = None
 
-    def __init__(self, radius: float = 0.5, color: rl.Color = None, rings: int = 16, slices: int = 16, texture_path: str = None):
+    def __init__(self, radius: float = 0.5, color: rl.Color = rl.WHITE, rings: int = 16, slices: int = 16, texture_path: str = None):
         super().__init__()
         self.radius = radius
-        self.color = color if color else rl.WHITE
+        self.color = color
         self.rings = rings
         self.slices = slices
         self.texture_path = texture_path
@@ -40,7 +40,7 @@ class Sphere(Renderable3D):
         self.global_transform = Transform.Global
 
     def render(self):
-        pos = self.global_transform.position
+        pos = self.global_transform.position.to_raylib()
         scale_val = self.radius * max(self.global_transform.scale.x, self.global_transform.scale.y, self.global_transform.scale.z)
         final_scale = rl.Vector3(scale_val, scale_val, scale_val)
 
@@ -56,4 +56,4 @@ class Sphere(Renderable3D):
         else:
             axis = rl.Vector3(q.x / s, q.y / s, q.z / s)
 
-        rl.draw_model_ex(self.model, rl.Vector3(pos.x, pos.y, pos.z), axis, math.degrees(angle), final_scale, self.color)
+        rl.draw_model_ex(self.model, pos, axis, math.degrees(angle), final_scale, self.color)
