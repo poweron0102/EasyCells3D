@@ -58,7 +58,7 @@ class Game:
 
         rl.init_window(screen_resolution[0], screen_resolution[1], game_name)
         rl.set_exit_key(rl.KeyboardKey.KEY_NULL)
-        #rl.set_target_fps(60)
+        rl.set_target_fps(60)
 
         self.show_fps = show_fps
         self.game_name = game_name

@@ -49,17 +49,12 @@ class Camera3D(Component, Camera):
 
         self.renderables: list[Renderable3D] = []
 
-        self.global_transform = Transform()
-
     def init(self):
         self.add_to_game(self.game)
 
     def on_destroy(self):
         if self in self.game.cameras:
             self.game.cameras.remove(self)
-
-    def loop(self):
-        self.global_transform = Transform.Global
 
     def update_rl_camera(self):
         self.rl_camera.position = self.global_transform.position.to_raylib()

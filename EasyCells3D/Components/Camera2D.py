@@ -45,17 +45,12 @@ class Camera2D(Component, Camera):
         self.debug_lines: list[tuple[Vec2, Vec2, rl.Color]] = []
         self.debug_polygon: list[tuple[list[Vec2], rl.Color]] = []
 
-        self.global_transform = Transform()
-
     def init(self):
         self.add_to_game(self.game)
 
     def on_destroy(self):
         if Camera2D.main == self:
             Camera2D.main = None
-
-    def loop(self):
-        self.global_transform = Transform.Global
 
     def update_rl_camera(self):
         # Offset define o centro da tela (pivô da câmera)

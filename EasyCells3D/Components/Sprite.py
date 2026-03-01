@@ -23,10 +23,6 @@ class Sprite(Renderable2D):
         self.horizontal_flip = False
         self.vertical_flip = False
 
-        self.global_transform = Transform()
-
-    def loop(self):
-        self.global_transform = Transform.Global
 
     def render(self):
         if not self.texture.id:

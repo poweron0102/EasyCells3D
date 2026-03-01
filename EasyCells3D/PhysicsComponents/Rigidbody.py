@@ -62,8 +62,7 @@ class Rigidbody(Component):
     def init(self):
         self.collider = self.GetComponent(Collider)
         if not self.collider:
-            print(
-                f"Warning: Rigidbody on item '{self.item}' has no Collider component. It will not participate in collisions.")
+            print(f"Warning: Rigidbody on item '{self.item}' has no Collider component. It will not participate in collisions.")
 
         if self not in Rigidbody.RigidBodies:
             Rigidbody.RigidBodies.append(self)

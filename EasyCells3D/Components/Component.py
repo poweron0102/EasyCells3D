@@ -18,13 +18,69 @@ class Item:
     """
     transform: 'Transform'
     parent: 'Item | None'
-
+    _global_transform: 'Transform'
     game: 'Game'
+
+    @property
+    def global_transform(self) -> 'Transform':
+        """
+        Cached version of the global_transform property.
+        it is fast, but is only updated once per frame.
+        """
+        return self._global_transform
+
+    def global_transform_get(self) -> 'Transform':
+        """
+        Calculates the global transform dynamically by traversing the parent hierarchy.
+        This is not cached and performs calculations on every access.
+        """
+        if self.parent:
+            return self.transform.ToGlobal(self.parent.global_transform)
+        return self.transform.clone()
+
+    def global_transform_set(self, value: 'Transform'):
+        """
+         Sets the local transform based on the given global transform by traversing the parent hierarchy.
+         This is not cached and performs calculations on every access.
+         Use it only if you really need to set the global transform directly.
+         Otherwise, set the local transform and let the global transform be calculated automatically.
+         Expensive operation.
+         Use Transform.Global on `Component.loop` instead.
+        """
+        if self.parent:
+            parent_global = self.parent.global_transform_get()
+
+            # Calculate relative scale (S_local = S_global / S_parent)
+            scale = Vec3(
+                value.scale.x / parent_global.scale.x if parent_global.scale.x != 0 else 0,
+                value.scale.y / parent_global.scale.y if parent_global.scale.y != 0 else 0,
+                value.scale.z / parent_global.scale.z if parent_global.scale.z != 0 else 0
+            )
+
+            # Calculate relative rotation (R_local = R_parent^-1 * R_global)
+            rotation = parent_global.rotation.inverse() * value.rotation
+
+            # Calculate relative position
+            # P_local = (R_parent^-1 * (P_global - P_parent)) / S_parent
+            diff = value.position - parent_global.position
+            inv_rotated_diff = parent_global.rotation.inverse().rotate_vector(diff)
+
+            position = Vec3(
+                inv_rotated_diff.x / parent_global.scale.x if parent_global.scale.x != 0 else 0,
+                inv_rotated_diff.y / parent_global.scale.y if parent_global.scale.y != 0 else 0,
+                inv_rotated_diff.z / parent_global.scale.z if parent_global.scale.z != 0 else 0
+            )
+
+            self.transform = Transform(position, rotation, scale)
+        else:
+            self.transform = value.clone()
+
 
     def __init__(self, game: 'Game', parent=None):
         self.components: dict[Type, Component] = {}
         self.children: set[Item] = set()
         self.transform = Transform()
+        self._global_transform = self.transform
         self.parent: 'Item | None' = parent
         self.game = game
         self.destroy_on_load = True
@@ -60,7 +116,7 @@ class Item:
         if not self.parent:
             Transform.Global = Transform()
         self.transform.SetGlobal()
-        current_global = Transform.Global
+        self._global_transform = Transform.Global
 
         for component in list(self.components.keys()):
             if self.components[component].enable:
@@ -73,7 +129,7 @@ class Item:
                     traceback.print_exc()
 
         for child in list(self.children):
-            Transform.Global = current_global
+            Transform.Global = self.global_transform
             child.update()
 
     def AddComponent[T: 'Component'](self, component: T) -> T:
@@ -117,6 +173,10 @@ class Component:
     @transform.setter
     def transform(self, value: 'Transform') -> None:
         self.item.transform = value
+
+    @property
+    def global_transform(self) -> 'Transform':
+        return self.item.global_transform
 
     @property
     def game(self) -> 'Game':

@@ -7,18 +7,17 @@ from EasyCells3D.Components.Camera3D import Renderable3D
 
 
 class Sphere(Renderable3D):
-    global_transform: Transform
     model: rl.Model = None
     texture: rl.Texture2D = None
 
-    def __init__(self, radius: float = 0.5, color: rl.Color = rl.WHITE, rings: int = 16, slices: int = 16, texture_path: str = None):
+    def __init__(self, radius: float = 0.5, color: rl.Color = rl.WHITE, rings: int = 16, slices: int = 16, texture_path: str = None, shader: rl.Shader = None):
         super().__init__()
         self.radius = radius
         self.color = color
         self.rings = rings
         self.slices = slices
         self.texture_path = texture_path
-        self.global_transform = Transform()
+        self.shader = shader
 
     def init(self):
         super().init()
@@ -29,15 +28,19 @@ class Sphere(Renderable3D):
             self.texture = rl.load_texture(f"Assets/{self.texture_path}")
             rl.set_material_texture(self.model.materials[0], rl.MATERIAL_MAP_DIFFUSE, self.texture)
 
+    def set_shader_value(self, name: str, value, uniform_type: int):
+        if self.shader:
+            loc = rl.get_shader_location(self.shader, name)
+            rl.set_shader_value(self.shader, loc, value, uniform_type)
+
     def on_destroy(self):
         super().on_destroy()
         if self.model:
             rl.unload_model(self.model)
         if self.texture:
             rl.unload_texture(self.texture)
-
-    def loop(self):
-        self.global_transform = Transform.Global
+        if self.shader:
+            rl.unload_shader(self.shader)
 
     def render(self):
         pos = self.global_transform.position.to_raylib()

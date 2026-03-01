@@ -38,7 +38,6 @@ class TileMapRenderer(Renderable2D):
             self.tile_set = rl.load_texture(f"Assets/{tile_set}")
             
         self.tile_size = tile_size
-        self.global_transform = Transform()
         
         # Calcula quantos tiles cabem no tileset (colunas, linhas)
         self.matrix_size = (self.tile_set.width // tile_size, self.tile_set.height // tile_size)
@@ -82,9 +81,6 @@ class TileMapRenderer(Renderable2D):
 
         rl.end_texture_mode()
         self.dirty = False
-
-    def loop(self):
-        self.global_transform = Transform.Global
 
     def render(self):
         if not self.tile_map:
