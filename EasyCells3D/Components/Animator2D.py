@@ -41,6 +41,9 @@ class Animator2D(Component):
             self.game.scheduler.add_dict_generator(self, self.run_animation())
             return
 
+        if self._current_animation == value:
+            return
+
         self._current_animation = value
 
         if value is None:
