@@ -136,17 +136,21 @@ class Player(Component):
         pos = self.transform.positionVec2
 
         # --- Raycast para o Chão ---
-        hit_ground = Collider.ray_cast_static(
+        # Ajuste da distância para o RectCast (considerando que o Rect já tem o tamanho do player)
+        cast_distance = max(0.1, self.ray_length_down - (frame_size / 2))
+        hit_ground = Collider.rect_cast_static(
             origin=pos,
+            size=Vec2(frame_size - 2, frame_size),
+            angle=0,
             direction=Vec2(0, 1),  # Para baixo
-            max_distance=self.ray_length_down,
+            max_distance=cast_distance,
             mask=self.environment_mask
         )
 
         self.is_grounded = False
-        # hit_ground retorna (Collider, Vec2 (Ponto), Vec2 (Normal)) se atingir
+        # hit_ground retorna (Collider, Vec2 (Ponto), Vec2 (Normal), float (Dist)) se atingir
         if hit_ground:
-            col, point, normal = hit_ground
+            col, point, normal, _ = hit_ground
             # Ignora colisão com o próprio Collider do Player
             if col != self.collider:
                 self.is_grounded = True

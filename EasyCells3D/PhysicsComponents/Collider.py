@@ -150,6 +150,11 @@ class Collider(Component):
             10
         )
         _is_point_in_polygon_numba(np.array([0, 0], dtype=np.float64), self.polygons[0].vertices)
+        _polygon_sweep_numba(
+            self.polygons[0].vertices,
+            self.polygons[0].vertices,
+            np.array([1.0, 0.0], dtype=np.float64)
+        )
 
         print("Collider functions compiled")
         Collider.compiled = True
@@ -251,6 +256,59 @@ class Collider(Component):
             if np.dot(closest_normal.to_tuple, direction_array) > 0:
                 closest_normal *= -1
             return closest_collider, closest_point, closest_normal
+
+        return None
+
+    @staticmethod
+    def rect_cast_static(
+            origin: Vec2,
+            size: Vec2,
+            angle: float,
+            direction: Vec2,
+            max_distance: float,
+            mask: int
+    ) -> 'tuple[Collider, Vec2, Vec2, float] | None':
+        """
+        Retorna:
+        Collider: Collider atingido
+        Vec2: Centro do rect no impacto
+        Vec2: Normal da superfície atingida
+        float: Distância percorrida
+        """
+        w, h = size.x / 2, size.y / 2
+        local_vertices = np.array([[-w, -h], [w, -h], [w, h], [-w, h]], dtype=np.float64)
+
+        rad = np.radians(angle)
+        c, s = np.cos(rad), np.sin(rad)
+        rotation_matrix_T = np.array([[c, s], [-s, c]])
+
+        rect_vertices = (local_vertices @ rotation_matrix_T) + np.array([origin.x, origin.y])
+        velocity = np.array([direction.x, direction.y], dtype=np.float64) * max_distance
+
+        closest_collider = None
+        closest_normal = None
+        closest_distance = max_distance
+        hit_detected = False
+
+        for collider in Collider.colliders:
+            if collider.mask & mask == 0:
+                continue
+
+            for polygon in collider.polygons:
+                poly_transformed = polygon.apply_transform(collider.global_transform)
+                hit, t, normal = _polygon_sweep_numba(rect_vertices, poly_transformed.vertices, velocity)
+
+                if hit:
+                    distance = t * max_distance
+                    if distance < closest_distance:
+                        closest_distance = distance
+                        closest_collider = collider
+                        closest_normal = Vec2(normal[0], normal[1])
+                        hit_detected = True
+
+        if hit_detected:
+            impact_point = origin + direction * closest_distance
+            return closest_collider, impact_point, closest_normal, closest_distance
 
         return None
 
@@ -383,3 +441,82 @@ def _sat_collision(vertices_a, vertices_b):
 
     mtv = mtv_axis * min_overlap
     return True, mtv
+
+
+@njit
+def _polygon_sweep_numba(vertices_a, vertices_b, velocity):
+    t_min = 0.0
+    t_max = 1.0
+    collision_normal = np.zeros(2)
+
+    # Check axes from A
+    for i in range(len(vertices_a)):
+        v1 = vertices_a[i]
+        v2 = vertices_a[(i + 1) % len(vertices_a)]
+        edge = v2 - v1
+        axis = np.array([-edge[1], edge[0]])
+        norm = np.linalg.norm(axis)
+        if norm < 1e-9: continue
+        axis /= norm
+
+        min_a, max_a = project_polygon(vertices_a, axis)
+        min_b, max_b = project_polygon(vertices_b, axis)
+        v_proj = np.dot(velocity, axis)
+
+        if abs(v_proj) < 1e-9:
+            if max_a < min_b or max_b < min_a:
+                return False, 0.0, np.zeros(2)
+        else:
+            if v_proj > 0:
+                t_enter = (min_b - max_a) / v_proj
+                t_leave = (max_b - min_a) / v_proj
+            else:
+                t_enter = (max_b - min_a) / v_proj
+                t_leave = (min_b - max_a) / v_proj
+
+            if t_enter > t_min:
+                t_min = t_enter
+                collision_normal = -axis if v_proj > 0 else axis
+
+            if t_leave < t_max:
+                t_max = t_leave
+
+            if t_min > t_max:
+                return False, 0.0, np.zeros(2)
+
+    # Check axes from B
+    for i in range(len(vertices_b)):
+        v1 = vertices_b[i]
+        v2 = vertices_b[(i + 1) % len(vertices_b)]
+        edge = v2 - v1
+        axis = np.array([-edge[1], edge[0]])
+        norm = np.linalg.norm(axis)
+        if norm < 1e-9: continue
+        axis /= norm
+
+        min_a, max_a = project_polygon(vertices_a, axis)
+        min_b, max_b = project_polygon(vertices_b, axis)
+        v_proj = np.dot(velocity, axis)
+
+        if abs(v_proj) < 1e-9:
+            if max_a < min_b or max_b < min_a:
+                return False, 0.0, np.zeros(2)
+        else:
+            if v_proj > 0:
+                t_enter = (min_b - max_a) / v_proj
+                t_leave = (max_b - min_a) / v_proj
+            else:
+                t_enter = (max_b - min_a) / v_proj
+                t_leave = (min_b - max_a) / v_proj
+
+            if t_enter > t_min:
+                t_min = t_enter
+                collision_normal = -axis if v_proj > 0 else axis
+
+            if t_leave < t_max:
+                t_max = t_leave
+
+            if t_min > t_max:
+                return False, 0.0, np.zeros(2)
+
+    return True, t_min, collision_normal
