@@ -12,6 +12,7 @@ class Animation2D:
         self.speed = speed
         self.frames = frames
         self.on_end = on_end
+        self.index_y = index_y
 
     def next_frame(self) -> int | None:
         self.current_frame += 1
@@ -39,10 +40,14 @@ class Animator2D(Component):
             self._current_animation = value
             self.game.scheduler.add_dict_generator(self, self.run_animation())
             return
+
         self._current_animation = value
+
         if value is None:
             self.stop_animation()
             return
+        else:
+            self.sprite.index_y = self.dict_animations[value].index_y
 
         self.dict_animations[self.current_animation].current_frame = 0
         self.game.scheduler.change_time_dict_generator(self, 0)
