@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+import random
 from typing import List
 
 from .. import Game
@@ -80,9 +82,6 @@ class Rigidbody(Component):
             return
         self.velocity += impulse * self.inv_mass
 
-    def loop(self):
-        pass
-
     def _integrate(self, delta_time: float):
         if self.is_kinematic:
             return
@@ -94,10 +93,13 @@ class Rigidbody(Component):
         self.velocity += acceleration * delta_time
         self.velocity *= max(0, 1.0 - self.drag * delta_time)
         self.transform.positionVec2 += self.velocity * delta_time
+        self.global_transform.positionVec2 += self.velocity * delta_time
 
         self.angular_velocity += self._torque_accumulator * delta_time
         self.angular_velocity *= max(0, 1.0 - self.angular_drag * delta_time)
         self.transform.angle += self.angular_velocity * delta_time
+        self.global_transform.angle += self.angular_velocity * delta_time
+
 
         self._force_accumulator = Vec2(0, 0)
         self._torque_accumulator = 0.0
@@ -117,7 +119,6 @@ class Rigidbody(Component):
                 if (rb1.is_kinematic and rb2.is_kinematic) or not rb1.collider or not rb2.collider:
                     continue
 
-                # The collision check now returns the MTV
                 colliding, mtv_np = rb1.collider.check_collision_global(rb2.collider)
 
                 if colliding:
@@ -142,7 +143,6 @@ class Rigidbody(Component):
 
         Game.instance.scheduler.add_generator(physics_loop(), 0)
 
-
     @staticmethod
     def _resolve_collision(rb1: Rigidbody, rb2: Rigidbody, mtv: Vec2):
         """
@@ -150,43 +150,42 @@ class Rigidbody(Component):
         """
         # print(f"Resolving collision between {rb1.item} and {rb2.item} with MTV: {mtv}")
         # print(f"start position rb1: {rb1.transform.position}, rb2: {rb2.transform.position}")
-        # The collision normal is the normalized MTV.
+
         collision_normal = mtv.normalize()
         penetration_depth = mtv.magnitude()
 
         relative_velocity = rb2.velocity - rb1.velocity
         vel_along_normal = relative_velocity.dot(collision_normal)
 
-        # Do not resolve if velocities are already separating
-        if vel_along_normal > 0:
-            return
-
-        restitution = min(rb1.restitution, rb2.restitution)
         total_inv_mass = rb1.inv_mass + rb2.inv_mass
 
         if total_inv_mass <= 0:
             return
 
         # --- 1. Impulse Resolution (Velocity Change) ---
-        j = -(1 + restitution) * vel_along_normal
-        j /= total_inv_mass
-        impulse = collision_normal * j
+        # Só aplicamos impulso se os objetos não estiverem se separando
+        if vel_along_normal <= 0:
+            restitution = min(rb1.restitution, rb2.restitution)
 
-        if not rb1.is_kinematic:
-            rb1.velocity -= impulse * rb1.inv_mass
-        if not rb2.is_kinematic:
-            rb2.velocity += impulse * rb2.inv_mass
+            j = -(1 + restitution) * vel_along_normal
+            j /= total_inv_mass
+            impulse = collision_normal * j
+
+            if not rb1.is_kinematic:
+                rb1.velocity -= impulse * rb1.inv_mass
+            if not rb2.is_kinematic:
+                rb2.velocity += impulse * rb2.inv_mass
 
         # --- 2. Positional Correction (Penetration Resolution) ---
-        # This moves the objects apart to fix the overlap.
-        percent = 0.4  # How much of the penetration to correct (usually 20-80%) to avoid jitter
-        slop = 0.01  # A small buffer to prevent objects from getting stuck
+        percent = 0.8
+        slop = 0.01
         correction_amount = max(penetration_depth - slop, 0.0) / total_inv_mass * percent
         correction = collision_normal * correction_amount
 
         if not rb1.is_kinematic:
             rb1.transform.positionVec2 -= correction * rb1.inv_mass
+            rb1.global_transform.positionVec2 -= correction * rb1.inv_mass
         if not rb2.is_kinematic:
             rb2.transform.positionVec2 += correction * rb2.inv_mass
+            rb2.global_transform.positionVec2 += correction * rb2.inv_mass
 
-        #print(f"end   position rb1: {rb1.transform.position}, rb2: {rb2.transform.position}")

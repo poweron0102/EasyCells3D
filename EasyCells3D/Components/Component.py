@@ -75,6 +75,37 @@ class Item:
         else:
             self.transform = value.clone()
 
+    def global_position_set(self, value: Vec3):
+        if self.parent:
+            parent_global = self.parent.global_transform_get()
+            diff = value - parent_global.position
+            inv_rotated_diff = parent_global.rotation.inverse().rotate_vector(diff)
+
+            self.transform.position = Vec3(
+                inv_rotated_diff.x / parent_global.scale.x if parent_global.scale.x != 0 else 0,
+                inv_rotated_diff.y / parent_global.scale.y if parent_global.scale.y != 0 else 0,
+                inv_rotated_diff.z / parent_global.scale.z if parent_global.scale.z != 0 else 0
+            )
+        else:
+            self.transform.position = value
+
+    def global_rotation_set(self, value: Quaternion):
+        if self.parent:
+            parent_global = self.parent.global_transform_get()
+            self.transform.rotation = parent_global.rotation.inverse() * value
+        else:
+            self.transform.rotation = value
+
+    def global_scale_set(self, value: Vec3):
+        if self.parent:
+            parent_global = self.parent.global_transform_get()
+            self.transform.scale = Vec3(
+                value.x / parent_global.scale.x if parent_global.scale.x != 0 else 0,
+                value.y / parent_global.scale.y if parent_global.scale.y != 0 else 0,
+                value.z / parent_global.scale.z if parent_global.scale.z != 0 else 0
+            )
+        else:
+            self.transform.scale = value
 
     def __init__(self, game: 'Game', parent=None):
         self.components: dict[Type, Component] = {}

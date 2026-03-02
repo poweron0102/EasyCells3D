@@ -6,6 +6,14 @@ import raylibpy as rl
 from .Camera2D import Renderable2D
 from .Component import Component, Transform
 
+def matrix_from_csv(file_path: str) -> list[list[int]]:
+    matrix = []
+    with open(f"Assets/{file_path}", 'r') as file:
+        for line in file:
+            row = [int(value.strip()) for value in line.split(',')]
+            matrix.append(row)
+    return matrix
+
 
 class TileMap(Component):
 
@@ -72,6 +80,7 @@ class TileMapRenderer(Renderable2D):
 
         for y, row in enumerate(self.tile_map.matrix):
             for x, tile_index in enumerate(row):
+                if tile_index == -1: continue
                 tx, ty = self.int2coord(tile_index)
                 
                 source_rec = rl.Rectangle(tx * self.tile_size, ty * self.tile_size, self.tile_size, self.tile_size)

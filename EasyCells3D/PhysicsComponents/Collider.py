@@ -74,46 +74,55 @@ class Collider(Component):
         polygons: list of Polygon objects
         mask: collision mask (bitwise)
         """
-        self.word_position = Transform()
         self.polygons: List[Polygon] = polygons
         self.compile_numba_functions()
         self.mask = mask
         self.debug = debug
         Collider.colliders.append(self)
 
-    def init(self):
-        self.word_position = self.CalculateGlobalTransform()
-
     def on_destroy(self):
         Collider.colliders.remove(self)
         self.on_destroy = lambda: None
 
     def loop_debug(self):
-        self.word_position = Transform.Global
         if Camera2D.main:
             for polygon in self.polygons:
-                poly_transformed = polygon.apply_transform(self.word_position)
+                poly_transformed = polygon.apply_transform(self.global_transform)
                 points = [Vec2(p[0], p[1]) for p in poly_transformed.vertices]
                 points.append(points[0])
                 Camera2D.main.debug_polygon.append((points, rl.RED))
 
     def loop_no_debug(self):
-        self.word_position = Transform.Global
+        pass
 
     def check_collision_global(self, other: 'Collider') -> Tuple[bool, np.ndarray | None]:
         """
-        Checks for collision and returns the collision status and the MTV.
+        Checks for collision and returns the collision status and the BEST MTV.
         Returns: (bool, mtv_vector or None)
         """
+        has_collision = False
+        best_mtv = None
+        max_penetration_sq = -1.0
+
         for polygon in self.polygons:
-            p1_transformed = polygon.apply_transform(self.word_position)
+            p1_transformed = polygon.apply_transform(
+                self.global_transform)  # Usando global_transform conforme seu snippet
             for other_polygon in other.polygons:
-                p2_transformed = other_polygon.apply_transform(other.word_position)
+                p2_transformed = other_polygon.apply_transform(other.global_transform)
 
                 colliding, mtv = _sat_collision(p1_transformed.vertices, p2_transformed.vertices)
                 if colliding:
-                    return True, mtv
-        return False, None
+                    has_collision = True
+
+                    # Calcula o quadrado da magnitude (evita a raiz quadrada para melhor performance)
+                    penetration_sq = mtv[0] ** 2 + mtv[1] ** 2
+
+                    # Salva o MTV que empurra o jogador com mais força para fora
+                    if penetration_sq > max_penetration_sq:
+                        max_penetration_sq = penetration_sq
+                        best_mtv = mtv
+
+        return has_collision, best_mtv
 
     def is_point_inside(self, point: Vec2) -> bool:
         """
@@ -121,7 +130,7 @@ class Collider(Component):
         """
         point_array = np.array([point.x, point.y], dtype=np.float64)
         for polygon in self.polygons:
-            poly_transformed = polygon.apply_transform(self.word_position)
+            poly_transformed = polygon.apply_transform(self.global_transform)
             if _is_point_in_polygon_numba(point_array, poly_transformed.vertices):
                 return True
         return False
@@ -156,7 +165,7 @@ class Collider(Component):
         max_y = -np.inf
 
         for polygon in self.polygons:
-            polygon = polygon.apply_transform(self.word_position)
+            polygon = polygon.apply_transform(self.global_transform)
             for vertex in polygon.vertices:
                 min_x = min(min_x, vertex[0])
                 min_y = min(min_y, vertex[1])
@@ -185,7 +194,7 @@ class Collider(Component):
         closest_distance = max_distance
 
         for polygon in self.polygons:
-            polygon = polygon.apply_transform(self.word_position)
+            polygon = polygon.apply_transform(self.global_transform)
             intersection, normal, distance = _ray_polygon_intersection_numba(origin_array, direction_array,
                                                                              polygon.vertices, max_distance)
 
@@ -203,11 +212,11 @@ class Collider(Component):
 
     @staticmethod
     def ray_cast_static(
-            origin: Vec2[float],
-            direction: Vec2[float],
+            origin: Vec2,
+            direction: Vec2,
             max_distance: float,
             mask: int
-    ) -> 'tuple[Collider, Vec2[float], Vec2[float]] | None':
+    ) -> 'tuple[Collider, Vec2, Vec2] | None':
         """
         Retorna:
         Collider: Collider atingido pelo raio
@@ -228,7 +237,7 @@ class Collider(Component):
                 continue
 
             for polygon in collider.polygons:
-                polygon = polygon.apply_transform(collider.word_position)
+                polygon = polygon.apply_transform(collider.global_transform)
                 intersection, normal, distance = _ray_polygon_intersection_numba(origin_array, direction_array,
                                                                                  polygon.vertices, max_distance)
 
