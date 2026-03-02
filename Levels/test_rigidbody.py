@@ -37,8 +37,8 @@ def init(game: Game):
             {
                 "idle": Animation2D(100, [18]),
                 "run": Animation2D(0.1, list(range(0, 7))),
-                "death": Animation2D(0.2, list(range(8, 13)), "idle"),
-                "rising": Animation2D(0.2, list(range(13, 18)), "boll"),
+                "death": Animation2D(0.2, list(range(8, 13)), 0, "idle"),
+                "rising": Animation2D(0.2, list(range(13, 18)), 0, "boll"),
                 "boll": Animation2D(0.2, [17]),
             },
             "idle"
@@ -57,7 +57,7 @@ def init(game: Game):
 
     # --- Movable Box Setup ---
     caixa = game.CreateItem()
-    caixa.AddComponent(Sprite("player24.png", (24, 24))).index = 1
+    caixa.AddComponent(Sprite("player24.png", (24, 24))).index_x = 1
     caixa.transform.position = Vec2(80, -100)
     caixa.AddComponent(RectCollider(rl.Rectangle(0, 0, 24, 24), debug=True))
     caixa_rg = caixa.AddComponent(Rigidbody(mass=200, drag=0.2, restitution=100000, use_gravity=True, is_kinematic=False))

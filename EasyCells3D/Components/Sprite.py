@@ -8,7 +8,8 @@ from .Component import Transform
 
 class Sprite(Renderable2D):
     texture: rl.Texture2D
-    index: int = 0
+    index_x: int = 0
+    index_y: int = 0
     size: tuple[int, int] = (0, 0)
 
     def __init__(self, image_path: str | rl.Texture2D, size: tuple[int, int] = None):
@@ -31,7 +32,7 @@ class Sprite(Renderable2D):
         transform = self.global_transform
         
         # Define a área da textura a ser desenhada (Source Rectangle)
-        # Lida com animação (index) e espelhamento (flip)
+        # Lida com animação (index_x) e espelhamento (flip)
         src_width = self.size[0]
         src_height = self.size[1]
         
@@ -42,7 +43,7 @@ class Sprite(Renderable2D):
             src_height *= -1
 
         source_rec = rl.Rectangle(
-            self.index * abs(src_width), 0, 
+            self.index_x * abs(src_width), self.index_y * abs(src_height),
             src_width, src_height
         )
 

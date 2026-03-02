@@ -8,7 +8,7 @@ class Animation2D:
     current_frame: int = 0
     animator: 'Animator2D'
 
-    def __init__(self, speed: float, frames: list[int], on_end: str = None):
+    def __init__(self, speed: float, frames: list[int], index_y: int = 0, on_end: str = None):
         self.speed = speed
         self.frames = frames
         self.on_end = on_end
@@ -61,7 +61,7 @@ class Animator2D(Component):
         while True:
             animation = self.dict_animations[self.current_animation]
             next_index = animation.next_frame()
-            self.sprite.index = next_index if next_index is not None else self.sprite.index
+            self.sprite.index_x = next_index if next_index is not None else self.sprite.index_x
             yield animation.speed
 
     def stop_animation(self):
