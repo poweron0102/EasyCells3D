@@ -1,3 +1,4 @@
+import json
 import math
 from typing import Callable
 
@@ -13,6 +14,18 @@ def matrix_from_csv(file_path: str) -> list[list[int]]:
             row = [int(value.strip()) for value in line.split(',')]
             matrix.append(row)
     return matrix
+
+def solids_set_from_tsj(file_path: str) -> set[int]:
+    solids_set = set()
+    with open(f"Assets/{file_path}", 'r') as file:
+        json_str = file.read()
+        data = json.loads(json_str)
+
+        tiles = data["tiles"]
+        for tile in tiles:
+            if tile["type"] == "Collider":
+                solids_set.add(tile["id"])
+    return solids_set
 
 
 class TileMap(Component):

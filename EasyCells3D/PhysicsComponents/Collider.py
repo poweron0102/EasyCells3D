@@ -181,10 +181,10 @@ class Collider(Component):
 
     def ray_cast(
             self,
-            origin: Vec2[float],
-            direction: Vec2[float],
+            origin: Vec2,
+            direction: Vec2,
             max_distance: float,
-    ) -> 'tuple[Vec2[float], Vec2[float]] | None':
+    ) -> 'tuple[Vec2, Vec2] | None':
         """
         Usa coordenadas globais
         Retorna:

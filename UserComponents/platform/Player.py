@@ -80,6 +80,8 @@ def load_player(game: 'Game', folder_name: str) -> Item:
 
 
 class Player(Component):
+    player_main: Player
+
     def __init__(self):
         self.rb: Rigidbody = None
         self.animator: Animator2D = None
@@ -106,6 +108,7 @@ class Player(Component):
         self.wall_direction = 0
 
         self.input = Input(ControllerType.KEYBOARD)
+        Player.player_main = self
 
     def init(self):
         self.rb = self.GetComponent(Rigidbody)

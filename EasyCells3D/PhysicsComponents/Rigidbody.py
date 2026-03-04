@@ -83,7 +83,7 @@ class Rigidbody(Component):
         self.velocity += impulse * self.inv_mass
 
     def _integrate(self, delta_time: float):
-        if self.is_kinematic:
+        if self.is_kinematic or not self.enable:
             return
 
         if self.use_gravity:
@@ -112,11 +112,14 @@ class Rigidbody(Component):
 
         # 2. Collision detection and resolution
         for i in range(len(Rigidbody.RigidBodies)):
-            for j in range(i + 1, len(Rigidbody.RigidBodies)):
-                rb1 = Rigidbody.RigidBodies[i]
-                rb2 = Rigidbody.RigidBodies[j]
+            rb1 = Rigidbody.RigidBodies[i]
+            if not rb1.enable or not rb1.collider: continue
 
-                if (rb1.is_kinematic and rb2.is_kinematic) or not rb1.collider or not rb2.collider:
+            for j in range(i + 1, len(Rigidbody.RigidBodies)):
+                rb2 = Rigidbody.RigidBodies[j]
+                if not rb2.enable or not rb2.collider: continue
+
+                if rb1.is_kinematic and rb2.is_kinematic:
                     continue
 
                 colliding, mtv_np = rb1.collider.check_collision_global(rb2.collider)

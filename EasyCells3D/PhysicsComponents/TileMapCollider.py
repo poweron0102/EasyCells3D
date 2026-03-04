@@ -5,7 +5,6 @@ from ..Components.TileMap import TileMap
 
 class TileMapCollider(Collider):
     def __init__(self, solids: set[int], tile_size: int, mask: int = 1, debug: bool = False):
-        self.word_position = Transform()
         self.mask = mask
         self.solids = solids
         self.tile_size = tile_size
@@ -13,7 +12,6 @@ class TileMapCollider(Collider):
         Collider.colliders.append(self)
 
     def init(self):
-        self.word_position = self.CalculateGlobalTransform()
         polygons = []
         tile_map = self.GetComponent(TileMap)
         matrix: list[list[int]] = tile_map.matrix
