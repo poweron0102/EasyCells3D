@@ -3,6 +3,7 @@ import raylibpy as rl
 from EasyCells3D import Game, Vec2
 from EasyCells3D.Components import Item, Animation2D, Sprite, Animator2D, Component
 from EasyCells3D.PhysicsComponents import Rigidbody, Collider, RectCollider
+from UserComponents.platform.Input import Input, Action, ControllerType
 
 frame_size = 32
 animations_info = [
@@ -53,12 +54,9 @@ def load_player(game: 'Game', folder_name: str) -> Item:
         # Hit deve voltar pro Idle.
         on_end = "Idle" if anim_name == "Hit" else None
 
-        # Ajuste de velocidade (Run e Hit costumam ser mais rápidos que Idle)
-        speed = 0.05 if anim_name in ["Run", "Hit"] else 0.1
-
         # Cria o objeto de animação e adiciona ao dicionário
         dict_animations[anim_name] = Animation2D(
-            speed=speed,
+            speed=0.05,
             frames=list(range(num_frames)),
             index_y=index_y,
             on_end=on_end
@@ -72,7 +70,7 @@ def load_player(game: 'Game', folder_name: str) -> Item:
 
     #Criar o Item e adicionar os Componentes
     player_item = game.CreateItem()
-    player_item.AddComponent(RectCollider(rl.Rectangle(0, 0, frame_size, frame_size), debug=False))
+    player_item.AddComponent(RectCollider(rl.Rectangle(0, 0, 22, 28), debug=True, mask=0))
     player_item.AddComponent(Rigidbody(use_gravity=True, restitution=0))
     player_item.AddComponent(Sprite(final_texture, size=(frame_size, frame_size)))
     player_item.AddComponent(Animator2D(dict_animations, "Idle"))
@@ -94,10 +92,8 @@ class Player(Component):
         self.wall_jump_force = Vec2(550.0, 400.0)  # Força (X, Y) ao pular da parede
         self.wall_slide_speed = 100.0  # Velocidade limite (drag) ao escorregar
 
-        # O tamanho do raio (Raycast). Ajuste para que seja um pouco
-        # maior do que a distância do centro até a borda do seu Collider.
         self.ray_length_down = 20.0
-        self.ray_length_side = 20.0
+        self.ray_length_side = 15.0
 
         # Máscara do cenário com a qual os raycasts vão colidir
         self.environment_mask = 1
@@ -108,6 +104,8 @@ class Player(Component):
         self.is_grounded = False
         self.is_touching_wall = False
         self.wall_direction = 0
+
+        self.input = Input(ControllerType.KEYBOARD)
 
     def init(self):
         self.rb = self.GetComponent(Rigidbody)
@@ -140,7 +138,7 @@ class Player(Component):
         cast_distance = max(0.1, self.ray_length_down - (frame_size / 2))
         hit_ground = Collider.rect_cast_static(
             origin=pos,
-            size=Vec2(frame_size - 2, frame_size),
+            size=Vec2(20, frame_size),
             angle=0,
             direction=Vec2(0, 1),  # Para baixo
             max_distance=cast_distance,
@@ -177,9 +175,7 @@ class Player(Component):
             self.wall_direction = -1
 
     def _handle_movement(self):
-        move_input = 0
-        if rl.is_key_down(rl.KEY_RIGHT): move_input += 1
-        if rl.is_key_down(rl.KEY_LEFT): move_input -= 1
+        move_input = self.input.get_axis().x
 
         if move_input > 0:
             self.sprite.horizontal_flip = False
@@ -192,14 +188,14 @@ class Player(Component):
         # --- Lógica de Wall Slide (Drag) ---
         is_wall_sliding = False
         # Para agarrar na parede: toca a parede, está no ar, segurando para o lado da parede, e caindo (velocidade.y > 0)
-        if self.is_touching_wall and not self.is_grounded and move_input == self.wall_direction and self.rb.velocity.y > 0:
+        if self.is_touching_wall and not self.is_grounded and (move_input * self.wall_direction > 0.1) and self.rb.velocity.y > 0:
             is_wall_sliding = True
             # Aplica o "Drag" fixando um limite máximo de queda
             if self.rb.velocity.y > self.wall_slide_speed:
                 self.rb.velocity.y = self.wall_slide_speed
 
         # --- Lógica de Pulo ---
-        if rl.is_key_pressed(rl.KEY_SPACE):
+        if self.input.is_action_just_pressed(Action.JUMP):
             if self.is_grounded:
                 # Pulo Normal
                 self.rb.velocity.y = -self.jump_force
@@ -226,12 +222,10 @@ class Player(Component):
         if self.animator.current_animation == "Double Jump" and self.rb.velocity.y < 0: return
         if self.animator.current_animation == "Wall Jump" and self.rb.velocity.y < 0: return
 
-        move_input = 0
-        if rl.is_key_down(rl.KEY_RIGHT): move_input += 1
-        if rl.is_key_down(rl.KEY_LEFT): move_input -= 1
+        move_input = self.input.get_axis().x
 
         # Máquina de estados
-        if self.is_touching_wall and not self.is_grounded and move_input == self.wall_direction and self.rb.velocity.y > 0:
+        if self.is_touching_wall and not self.is_grounded and (move_input * self.wall_direction > 0.1) and self.rb.velocity.y > 0:
             self.animator.current_animation = "Wall Jump"
         elif not self.is_grounded:
             if self.rb.velocity.y < 0:
@@ -239,7 +233,7 @@ class Player(Component):
             else:
                 self.animator.current_animation = "Fall"
         else:  # No chão
-            if move_input != 0:
+            if abs(move_input) > 0.1:
                 self.animator.current_animation = "Run"
             else:
                 self.animator.current_animation = "Idle"

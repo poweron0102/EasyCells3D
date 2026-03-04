@@ -14,7 +14,7 @@ def init(game: Game):
     tile_map = game.CreateItem()
     tile_map.AddComponent(TileMap(matrix_from_csv("Pixel Adventure/plataforma_mapa.csv")))
     tile_map.AddComponent(TileMapRenderer("Pixel Adventure/Terrain/Terrain (16x16).png", 16))
-    tile_map_collider = tile_map.AddComponent(TileMapCollider(set(range(0, 255)), 16, debug=False))
+    tile_map_collider = tile_map.AddComponent(TileMapCollider(set(range(0, 255)), 16, debug=True))
     tile_map.AddComponent(Rigidbody(is_kinematic=True, use_gravity=False))
     tile_map.transform.scale.x = 2
     tile_map.transform.scale.y = 2
