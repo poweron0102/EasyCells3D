@@ -47,11 +47,14 @@ class TileMap(Component):
 
 class TileMapRenderer(Renderable2D):
     tile_map: TileMap
-    tile_set: rl.Texture2D
+    tile_set: rl.Texture
     render_texture: rl.RenderTexture = None
     dirty: bool = True
 
-    def __init__(self, tile_set: str | rl.Texture2D, tile_size: int):
+    def __init__(self, tile_set, tile_size: int):
+        """
+        tile_set = str | rl.Texture2D
+        """
         super().__init__()
         if isinstance(tile_set, str):
             self.tile_set = rl.load_texture(f"Assets/{tile_set}")

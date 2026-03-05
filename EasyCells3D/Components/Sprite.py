@@ -4,12 +4,15 @@ from .Camera2D import Renderable2D
 
 
 class Sprite(Renderable2D):
-    texture: rl.Texture2D
+    texture: rl.Texture
     index_x: int = 0
     index_y: int = 0
     size: tuple[int, int] = (0, 0)
 
-    def __init__(self, image: str | rl.Texture2D, size: tuple[int, int] = None):
+    def __init__(self, image, size: tuple[int, int] = None):
+        """
+        image = str | rl.Texture2D
+        """
         super().__init__()
         if isinstance(image, str):
             self.texture = rl.load_texture(f"Assets/{image}")
