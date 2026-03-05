@@ -21,8 +21,35 @@ class EditorUI(RenderableUI):
         self.selected_item: Item | None = None
         self.camera_mode_2d = True  # Estado para o botão 2D/3D
 
+        # Variáveis de Scroll
+        self.cam_scroll_y = 0.0
+        self.cam_content_h = 0.0
+
+        self.hier_scroll_y = 0.0
+        self.hier_content_h = 0.0
+
+        self.comp_scroll_y = 0.0
+        self.comp_content_h = 0.0
+
         # Variáveis de layout e controle
         rl.gui_set_style(rl.DEFAULT, rl.TEXT_SIZE, 16)
+
+    def _update_scroll(self, panel_rect: rl.Rectangle, current_scroll: float, content_h: float) -> float:
+        """Atualiza o valor de scroll com base na roda do rato, limitando aos limites do conteúdo."""
+        mouse_pos = rl.get_mouse_position()
+
+        # Só dá scroll se o rato estiver por cima do painel
+        if rl.check_collision_point_rec(mouse_pos, panel_rect):
+            wheel = rl.get_mouse_wheel_move()
+            current_scroll += wheel * 30.0  # 30 pixels por movimento da roda
+
+        panel_inner_h = panel_rect.height - 30  # Desconta a altura do cabeçalho do grupo
+
+        # Limita o máximo que pode "subir" o conteúdo
+        max_scroll_up = min(0.0, panel_inner_h - content_h)
+
+        # O scroll atual nunca deve ser > 0 e nunca menor que max_scroll_up
+        return max(max_scroll_up, min(0.0, current_scroll))
 
     def _draw_vector3_input(self, x, y, w, label, vec3_obj):
         """Desenha os valores de um Vec3 responsivo à largura disponível (w)."""
@@ -133,18 +160,29 @@ class EditorUI(RenderableUI):
         cam_rect = rl.Rectangle(cam_x, cam_y, cam_w, cam_h)
         rl.gui_group_box(cam_rect, "Camera Configs")
 
-        # Ícone de câmera fictício / Textos
-        rl.draw_rectangle_lines(int(cam_x + 10), int(cam_y + 20), int(cam_w - 20), int(cam_h * 0.4), rl.DARKGRAY)
-        rl.draw_circle_lines(int(cam_x + cam_w / 2), int(cam_y + 20 + (cam_h * 0.4) / 2), int(cam_h * 0.15),
+        self.cam_scroll_y = self._update_scroll(cam_rect, self.cam_scroll_y, self.cam_content_h)
+
+        rl.begin_scissor_mode(int(cam_x), int(cam_y + 10), int(cam_w), int(cam_h - 10))
+
+        start_y = cam_y + 20 + self.cam_scroll_y
+
+        # Ícone de câmera fictício / Textos (tamanho fixo para garantir scroll correto)
+        icon_h = 80
+        rl.draw_rectangle_lines(int(cam_x + 10), int(start_y), int(cam_w - 20), icon_h, rl.DARKGRAY)
+        rl.draw_circle_lines(int(cam_x + cam_w / 2), int(start_y + icon_h / 2), int(icon_h * 0.4),
                              rl.DARKGRAY)
 
         # Botões 2D / 3D
-        btn_y = cam_y + cam_h - 35
+        btn_y = start_y + icon_h + 10
         btn_w = (cam_w - 30) / 2
         if rl.gui_button(rl.Rectangle(cam_x + 10, btn_y, btn_w, 25), "2D"):
             self.camera_mode_2d = True
         if rl.gui_button(rl.Rectangle(cam_x + 10 + btn_w + 10, btn_y, btn_w, 25), "3D"):
             self.camera_mode_2d = False
+
+        self.cam_content_h = (btn_y + 25) - (cam_y + 20 + self.cam_scroll_y)
+
+        rl.end_scissor_mode()
 
         # 3. TRANSFORM
         tf_rect = rl.Rectangle(tf_x, tf_y, tf_w, tf_h)
@@ -168,10 +206,13 @@ class EditorUI(RenderableUI):
         hier_rect = rl.Rectangle(hier_x, hier_y, hier_w, hier_h)
         rl.gui_group_box(hier_rect, "Hierarquia")
 
+        self.hier_scroll_y = self._update_scroll(hier_rect, self.hier_scroll_y, self.hier_content_h)
+
         # Inicia corte para evitar que itens da hierarquia vazem da caixa
         rl.begin_scissor_mode(int(hier_x), int(hier_y + 10), int(hier_w), int(hier_h - 10))
 
-        y_offset = hier_y + 20
+        y_offset = hier_y + 20 + self.hier_scroll_y
+
         # Botões do topo
         btn_add_w = hier_w - 20
         if rl.gui_button(rl.Rectangle(hier_x + 10, y_offset, btn_add_w, 20), "+ Add Root"):
@@ -188,19 +229,25 @@ class EditorUI(RenderableUI):
         for item in self.game.item_list:
             y_offset = self._draw_hierarchy_node(item, hier_x + 10, y_offset, hier_w, 0)
 
+        self.hier_content_h = y_offset - (hier_y + 20 + self.hier_scroll_y)
+
         rl.end_scissor_mode()
 
         # 5. COMPONENTES
         comp_rect = rl.Rectangle(comp_x, comp_y, comp_w, comp_h)
         rl.gui_group_box(comp_rect, "Componentes")
 
+        self.comp_scroll_y = self._update_scroll(comp_rect, self.comp_scroll_y, self.comp_content_h)
+
         rl.begin_scissor_mode(int(comp_x), int(comp_y + 10), int(comp_w), int(comp_h - 10))
 
-        if self.selected_item:
-            if rl.gui_button(rl.Rectangle(comp_x + 10, comp_y + 20, comp_w - 20, 25), "+ Add Dummy Component"):
-                self.selected_item.AddComponent(DummyComponent())
+        y_comp = comp_y + 20 + self.comp_scroll_y
 
-            y_comp = comp_y + 60
+        if self.selected_item:
+            if rl.gui_button(rl.Rectangle(comp_x + 10, y_comp, comp_w - 20, 25), "+ Add Dummy Component"):
+                self.selected_item.AddComponent(DummyComponent())
+            y_comp += 35
+
             for comp_class, comp_instance in self.selected_item.components.items():
                 if comp_class == Component:
                     continue
@@ -226,5 +273,7 @@ class EditorUI(RenderableUI):
                     y_comp += 25
 
                 y_comp += 10  # Espaçamento extra
+
+        self.comp_content_h = y_comp - (comp_y + 20 + self.comp_scroll_y)
 
         rl.end_scissor_mode()

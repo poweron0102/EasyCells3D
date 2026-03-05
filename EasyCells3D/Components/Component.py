@@ -115,6 +115,7 @@ class Item:
         self.parent: 'Item | None' = parent
         self.game = game
         self.destroy_on_load = True
+        self.name = "Unnamed Item"
         if parent:
             parent.children.add(self)
         else:
