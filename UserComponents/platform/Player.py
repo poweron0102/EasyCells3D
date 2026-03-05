@@ -107,6 +107,7 @@ class Player(Component):
         self.is_touching_wall = False
         self.wall_direction = 0
 
+        print(Input.get_connected_controllers())
         self.input = Input(ControllerType.KEYBOARD)
         Player.player_main = self
 

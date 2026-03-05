@@ -15,8 +15,8 @@ class Renderable2D(Component):
     def init(self):
         if self.camera is None:
             self.camera = Camera2D.main
-            if self.camera:
-                self.camera.renderables.append(self)
+        if self.camera:
+            self.camera.renderables.append(self)
 
     def on_destroy(self):
         if self.camera and self in self.camera.renderables:

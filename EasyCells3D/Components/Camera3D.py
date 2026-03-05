@@ -13,6 +13,7 @@ class Renderable3D(Component):
     def init(self):
         if self.camera is None:
             self.camera = Camera3D.main
+        if self.camera:
             self.camera.renderables.append(self)
 
     def on_destroy(self):
