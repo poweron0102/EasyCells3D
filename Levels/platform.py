@@ -35,5 +35,5 @@ def init(game: Game):
 
 
 def loop(game: Game):
-    if rl.is_key_pressed(rl.KEY_R):
+    if rl.is_key_pressed(rl.KeyboardKey.KEY_R):
         game.new_game("platform")

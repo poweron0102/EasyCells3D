@@ -26,7 +26,7 @@ class Camera:
 
 
 class Game:
-    instance: 'Game'
+    instance: 'Game' = None
     level: ModuleType
     _game_name: str
 
@@ -46,6 +46,7 @@ class Game:
             game_name: str,
             show_fps: bool = False,
             screen_resolution: tuple[int, int] = (800, 600),
+            dynamic_resolution: bool = False
     ):
         # imports: -=-=-=-=-
         global ItemClass
@@ -54,7 +55,11 @@ class Game:
         ItemClass = Item
         # imports: -=-=-=-=-
 
-        Game.instance = self
+        if Game.instance is None:
+            Game.instance = self
+
+        if dynamic_resolution:
+            rl.set_config_flags(rl.FLAG_WINDOW_RESIZABLE)
 
         rl.init_window(screen_resolution[0], screen_resolution[1], game_name)
         rl.set_exit_key(rl.KeyboardKey.KEY_NULL)
@@ -172,4 +177,16 @@ class Game:
         except NewGame:
             pass
 
+        # Início do frame de renderização
+        rl.begin_drawing()
+        for camera in self.cameras:
+            camera.render()
         rl.end_drawing()
+
+    def __enter__(self):
+        self.previous_game = Game.instance
+        Game.instance = self
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        Game.instance = self.previous_game

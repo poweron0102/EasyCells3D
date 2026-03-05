@@ -10,13 +10,10 @@ Dependencies:
 # import asyncio
 
 from EasyCells3D import Game
-
-import Levels.test_rigidbody
-import Levels.solar
-import Levels.platform
+from EasyCells3D import EditorLevel
 
 if __name__ == '__main__':
     #GAME = Game(Levels.space_selector, "Spaceship", True, (1280, 720))
-    GAME = Game(Levels.platform, "Platform", True, (1280, 720), True)
+    GAME = Game(EditorLevel, "Editor", True, (1280, 720), True)
     GAME.run()
     # asyncio.run(GAME.run_async())

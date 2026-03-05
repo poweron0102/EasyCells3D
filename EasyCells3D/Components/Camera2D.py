@@ -54,7 +54,10 @@ class Camera2D(Component, Camera):
 
     def update_rl_camera(self):
         # Offset define o centro da tela (pivô da câmera)
-        self.rl_camera.offset = rl.Vector2(rl.get_screen_width() / 2, rl.get_screen_height() / 2)
+        if self.render_target:
+            self.rl_camera.offset = rl.Vector2(self.render_target.texture.width / 2, self.render_target.texture.height / 2)
+        else:
+            self.rl_camera.offset = rl.Vector2(rl.get_screen_width() / 2, rl.get_screen_height() / 2)
         
         # Target é a posição no mundo onde a câmera está focada
         pos = self.global_transform.position
