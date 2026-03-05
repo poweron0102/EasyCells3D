@@ -2,6 +2,7 @@ import math
 
 import pyray as rl
 
+from EasyCells3D import Game
 from EasyCells3D.Components import Component, Item
 from EasyCells3D.Components.CameraUI import RenderableUI
 from EasyCells3D.Geometry import Vec3
@@ -16,6 +17,10 @@ class DummyComponent(Component):
 
 
 class EditorUI(RenderableUI):
+
+    def __init__(self, running_game: Game):
+        self.running_game = running_game
+
     def init(self):
         super().init()
         self.selected_item: Item | None = None
@@ -166,14 +171,21 @@ class EditorUI(RenderableUI):
 
         start_y = cam_y + 20 + self.cam_scroll_y
 
-        # Ícone de câmera fictício / Textos (tamanho fixo para garantir scroll correto)
-        icon_h = 80
-        rl.draw_rectangle_lines(int(cam_x + 10), int(start_y), int(cam_w - 20), icon_h, rl.DARKGRAY)
-        rl.draw_circle_lines(int(cam_x + cam_w / 2), int(start_y + icon_h / 2), int(icon_h * 0.4),
-                             rl.DARKGRAY)
+        # Controles de Playback (Play, Pause, Stop)
+        control_h = 40
+        btn_w3 = (cam_w - 30) / 3  # Divide o espaço para 3 botões com 5px de espaçamento
+
+        if rl.gui_button(rl.Rectangle(cam_x + 10, start_y, btn_w3, 30), "Play"):
+            pass  # Implementar lógica de Play aqui
+
+        if rl.gui_button(rl.Rectangle(cam_x + 10 + btn_w3 + 5, start_y, btn_w3, 30), "Pause"):
+            pass  # Implementar lógica de Pause aqui
+
+        if rl.gui_button(rl.Rectangle(cam_x + 10 + (btn_w3 + 5) * 2, start_y, btn_w3, 30), "Stop"):
+            pass  # Implementar lógica de Stop aqui
 
         # Botões 2D / 3D
-        btn_y = start_y + icon_h + 10
+        btn_y = start_y + control_h + 10
         btn_w = (cam_w - 30) / 2
         if rl.gui_button(rl.Rectangle(cam_x + 10, btn_y, btn_w, 25), "2D"):
             self.camera_mode_2d = True
@@ -216,8 +228,8 @@ class EditorUI(RenderableUI):
         # Botões do topo
         btn_add_w = hier_w - 20
         if rl.gui_button(rl.Rectangle(hier_x + 10, y_offset, btn_add_w, 20), "+ Add Root"):
-            new_item = Item(self.game)
-            new_item.name = f"Item_{len(self.game.item_list)}"
+            new_item = self.running_game.CreateItem()
+            new_item.name = f"Item_{len(self.running_game.item_list)}"
         y_offset += 25
 
         if self.selected_item and rl.gui_button(rl.Rectangle(hier_x + 10, y_offset, btn_add_w, 20), "+ Add Child"):
@@ -226,7 +238,7 @@ class EditorUI(RenderableUI):
         y_offset += 35
 
         # Percorre a lista de itens
-        for item in self.game.item_list:
+        for item in self.running_game.item_list:
             y_offset = self._draw_hierarchy_node(item, hier_x + 10, y_offset, hier_w, 0)
 
         self.hier_content_h = y_offset - (hier_y + 20 + self.hier_scroll_y)
@@ -244,6 +256,14 @@ class EditorUI(RenderableUI):
         y_comp = comp_y + 20 + self.comp_scroll_y
 
         if self.selected_item:
+
+            # --- CAMPO PARA RENOMEAR O ITEM ---
+            rl.gui_label(rl.Rectangle(comp_x + 15, y_comp, 50, 20), "Nome:")
+            item_name = getattr(self.selected_item, 'name', f"Item_{id(self.selected_item) % 10000}")
+            rl.gui_text_box(rl.Rectangle(comp_x + 65, y_comp, comp_w - 85, 20), item_name, 50, False)
+            y_comp += 30
+            # ----------------------------------
+
             if rl.gui_button(rl.Rectangle(comp_x + 10, y_comp, comp_w - 20, 25), "+ Add Dummy Component"):
                 self.selected_item.AddComponent(DummyComponent())
             y_comp += 35
@@ -262,7 +282,7 @@ class EditorUI(RenderableUI):
                 input_w = comp_w * 0.5
 
                 for attr_name, attr_value in vars(comp_instance).items():
-                    if attr_name in ['item', 'game', 'enable']:
+                    if attr_name in ['item', 'game']:
                         continue
 
                     # Responsivo: Label fica na esquerda, TextBox na direita do painel

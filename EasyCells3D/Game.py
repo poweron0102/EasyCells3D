@@ -46,7 +46,9 @@ class Game:
             game_name: str,
             show_fps: bool = False,
             screen_resolution: tuple[int, int] = (800, 600),
-            dynamic_resolution: bool = False
+            dynamic_resolution: bool = False,
+            target_fps: int = -1,
+            render_target: rl.RenderTexture = None
     ):
         # imports: -=-=-=-=-
         global ItemClass
@@ -59,11 +61,12 @@ class Game:
             Game.instance = self
 
         if dynamic_resolution:
-            rl.set_config_flags(rl.FLAG_WINDOW_RESIZABLE)
+            rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_RESIZABLE)
 
         rl.init_window(screen_resolution[0], screen_resolution[1], game_name)
         rl.set_exit_key(rl.KeyboardKey.KEY_NULL)
-        #rl.set_target_fps(60)
+        if target_fps > 0:
+            rl.set_target_fps(target_fps)
 
         self.show_fps = show_fps
         self.game_name = game_name
