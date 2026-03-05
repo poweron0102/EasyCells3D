@@ -24,7 +24,6 @@ class Camera:
             game.cameras.insert(priority, self)
 
 
-
 class Game:
     instance: 'Game' = None
     level: ModuleType
@@ -37,8 +36,13 @@ class Game:
     @game_name.setter
     def game_name(self, value: str):
         self._game_name = value
-        if not self.show_fps:
-            rl.set_window_title(value)
+        # Só altera o título se não for uma sub-janela (render_target)
+        if not getattr(self, 'show_fps', False) and getattr(self, 'render_target', None) is None:
+            try:
+                if rl.is_window_ready():
+                    rl.set_window_title(value)
+            except Exception:
+                pass
 
     def __init__(
             self,
@@ -60,13 +64,17 @@ class Game:
         if Game.instance is None:
             Game.instance = self
 
-        if dynamic_resolution:
-            rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_RESIZABLE)
+        self.render_target = render_target
 
-        rl.init_window(screen_resolution[0], screen_resolution[1], game_name)
-        rl.set_exit_key(rl.KeyboardKey.KEY_NULL)
-        if target_fps > 0:
-            rl.set_target_fps(target_fps)
+        # Só inicializa a janela e os limites atrelados a ela caso não usemos um render_target
+        if self.render_target is None:
+            if dynamic_resolution:
+                rl.set_config_flags(rl.ConfigFlags.FLAG_WINDOW_RESIZABLE)
+
+            rl.init_window(screen_resolution[0], screen_resolution[1], game_name)
+            rl.set_exit_key(rl.KeyboardKey.KEY_NULL)
+            if target_fps > 0:
+                rl.set_target_fps(target_fps)
 
         self.show_fps = show_fps
         self.game_name = game_name
@@ -90,7 +98,6 @@ class Game:
             self.level = import_module(f".{level}", "Levels")
             self.current_level = level
 
-
         self.run_time = 0
 
         for item in list(self.item_list):
@@ -109,15 +116,17 @@ class Game:
         return ItemClass(self)
 
     def update(self):
-        rl.clear_background(rl.Color(30, 30, 30, 255))  # Cinza
-
         self.last_time = self.time
         self.time = rl.get_time() * 1000
         self.delta_time = rl.get_frame_time()
         self.run_time += self.delta_time
 
-        if self.show_fps:
-            rl.set_window_title(f'{self.game_name}   FPS: {rl.get_fps()}')
+        if self.show_fps and self.render_target is None:
+            try:
+                if rl.is_window_ready():
+                    rl.set_window_title(f'{self.game_name}   FPS: {rl.get_fps()}')
+            except Exception:
+                pass
 
     def run(self):
         while not rl.window_should_close():
@@ -138,30 +147,11 @@ class Game:
 
             # Início do frame de renderização
             rl.begin_drawing()
+            rl.clear_background(rl.BLANK)
+
             for camera in self.cameras:
                 camera.render()
             rl.end_drawing()
-        rl.close_window()
-
-    async def run_async(self):
-        while not rl.window_should_close():
-            self.update()
-            try:
-                for function in self.to_init:
-                    function()
-                self.to_init.clear()
-
-                for item in list(self.item_list):
-                    item.update()
-
-                self.level.loop(self)
-
-                self.scheduler.update()
-            except NewGame:
-                pass
-
-            rl.end_drawing()
-            await asyncio.sleep(0)
         rl.close_window()
 
     def run_once(self):
@@ -181,10 +171,11 @@ class Game:
             pass
 
         # Início do frame de renderização
-        rl.begin_drawing()
+        rl.begin_texture_mode(self.render_target)
+        rl.clear_background(rl.BLANK)
+        rl.end_texture_mode()
         for camera in self.cameras:
             camera.render()
-        rl.end_drawing()
 
     def __enter__(self):
         self.previous_game = Game.instance

@@ -1,3 +1,5 @@
+import pyray as rl
+
 from EasyCells3D.Components.CameraUI import CameraUI
 from EasyCells3D.EditorComponents.ComponentsReloader import ComponentsReloader
 from EasyCells3D.EditorComponents.EditorUI import EditorUI
@@ -14,7 +16,8 @@ def init(game: Game):
 
     camera = game.CreateItem().AddComponent(CameraUI())
 
-    running_game = Game(Levels.platform, "Platform", True, (1280, 720), True)
+    render = rl.load_render_texture(800, 600)
+    running_game = Game(Levels.platform, "Platform",  render_target=render)
 
     game.CreateItem().AddComponent(EditorUI(running_game))
 

@@ -30,6 +30,12 @@ class Camera2D(Component, Camera):
     """
     main: 'Camera2D' = None
 
+    @property
+    def final_render_target(self):
+        if self.render_target:
+            return self.render_target
+        return self.game.render_target
+
     def __init__(self, zoom: float = 1.0, render_target: rl.RenderTexture = None):
         self.zoom = zoom
         
@@ -54,8 +60,8 @@ class Camera2D(Component, Camera):
 
     def update_rl_camera(self):
         # Offset define o centro da tela (pivô da câmera)
-        if self.render_target:
-            self.rl_camera.offset = rl.Vector2(self.render_target.texture.width / 2, self.render_target.texture.height / 2)
+        if self.final_render_target:
+            self.rl_camera.offset = rl.Vector2(self.final_render_target.texture.width / 2, self.final_render_target.texture.height / 2)
         else:
             self.rl_camera.offset = rl.Vector2(rl.get_screen_width() / 2, rl.get_screen_height() / 2)
         
@@ -73,8 +79,9 @@ class Camera2D(Component, Camera):
     def render(self):
         self.update_rl_camera()
         
+        if self.final_render_target:
+            rl.begin_texture_mode(self.final_render_target)
         if self.render_target:
-            rl.begin_texture_mode(self.render_target)
             rl.clear_background(rl.BLANK)
 
         rl.begin_mode_2d(self.rl_camera)
@@ -82,8 +89,7 @@ class Camera2D(Component, Camera):
         self.renderables.sort(key=lambda r: r.transform.position.z)
 
         for ren in self.renderables:
-            if ren.enable:
-                ren.render()
+            if ren.enable: ren.render()
 
         for line in self.debug_lines:
             pos1, pos2, color = line
@@ -104,7 +110,7 @@ class Camera2D(Component, Camera):
 
         rl.end_mode_2d()
 
-        if self.render_target:
+        if self.final_render_target:
             rl.end_texture_mode()
 
     def draw_debug_line(self, position1, position2, color=rl.WHITE):

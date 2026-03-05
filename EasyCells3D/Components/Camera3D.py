@@ -1,6 +1,6 @@
 import pyray as rl
 
-from EasyCells3D.Components import Component, Transform
+from EasyCells3D.Components import Component
 from EasyCells3D.Game import Camera
 
 
@@ -31,7 +31,13 @@ class Camera3D(Component, Camera):
 
     main: Camera3D = None
 
-    def __init__(self, vfov: float = 60.0, projection: int = rl.CAMERA_PERSPECTIVE, render_target: rl.RenderTexture = None):
+    @property
+    def final_render_target(self):
+        if self.render_target:
+            return self.render_target
+        return self.game.render_target
+
+    def __init__(self, vfov: float = 60.0, projection: int = rl.CameraProjection.CAMERA_PERSPECTIVE, render_target: rl.RenderTexture = None):
         self.vfov = vfov
         self.projection = projection
         self.render_target = render_target
@@ -73,8 +79,9 @@ class Camera3D(Component, Camera):
     def render(self):
         self.update_rl_camera()
 
+        if self.final_render_target:
+            rl.begin_texture_mode(self.final_render_target)
         if self.render_target:
-            rl.begin_texture_mode(self.render_target)
             rl.clear_background(rl.BLANK)
 
         rl.begin_mode_3d(self.rl_camera)
@@ -84,5 +91,5 @@ class Camera3D(Component, Camera):
 
         rl.end_mode_3d()
 
-        if self.render_target:
+        if self.final_render_target:
             rl.end_texture_mode()

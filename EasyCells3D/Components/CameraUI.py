@@ -1,3 +1,5 @@
+from typing import Final
+
 import pyray as rl
 
 from .Component import Component
@@ -32,6 +34,12 @@ class CameraUI(Component, Camera):
     """
     main: 'CameraUI' = None
 
+    @property
+    def final_render_target(self):
+        if self.render_target:
+            return self.render_target
+        return self.game.render_target
+
     def __init__(self, render_target: rl.RenderTexture = None):
         self.render_target = render_target
 
@@ -50,8 +58,9 @@ class CameraUI(Component, Camera):
             self.game.cameras.remove(self)
 
     def render(self):
+        if self.final_render_target:
+            rl.begin_texture_mode(self.final_render_target)
         if self.render_target:
-            rl.begin_texture_mode(self.render_target)
             rl.clear_background(rl.BLANK)
 
         # Ordena por Z para permitir sobreposição de elementos de UI (layers)
@@ -61,5 +70,5 @@ class CameraUI(Component, Camera):
             if ren.enable:
                 ren.render()
 
-        if self.render_target:
+        if self.final_render_target:
             rl.end_texture_mode()
