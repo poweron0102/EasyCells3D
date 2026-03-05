@@ -1,7 +1,7 @@
 from typing import List, Tuple
 
 import numpy as np
-import raylibpy as rl
+import pyray as rl
 from numba import njit, prange
 
 from ..Components import Camera2D

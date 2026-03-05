@@ -5,7 +5,7 @@ from EasyCells3D.PhysicsComponents import Rigidbody, TileMapCollider, RectCollid
 from UserComponents.platform.OneWayPlatform import OneWayPlatform
 from UserComponents.platform.Player import load_player
 
-import raylibpy as rl
+import pyray as rl
 
 
 def init(game: Game):

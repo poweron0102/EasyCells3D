@@ -1,7 +1,7 @@
 import math
 from dataclasses import dataclass
 import numpy as np
-import raylibpy as rl
+import pyray as rl
 
 
 # typedef struct { float x; float y; } Vec2f;

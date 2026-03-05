@@ -1,11 +1,11 @@
 import json
-import math
 from typing import Callable
 
-import raylibpy as rl
+import pyray as rl
 
 from .Camera2D import Renderable2D
-from .Component import Component, Transform
+from .Component import Component
+
 
 def matrix_from_csv(file_path: str) -> list[list[int]]:
     matrix = []
@@ -53,10 +53,10 @@ class TileMapRenderer(Renderable2D):
 
     def __init__(self, tile_set: str | rl.Texture2D, tile_size: int):
         super().__init__()
-        if isinstance(tile_set, rl.Texture2D):
-            self.tile_set = tile_set
-        else:
+        if isinstance(tile_set, str):
             self.tile_set = rl.load_texture(f"Assets/{tile_set}")
+        else:
+            self.tile_set = tile_set
             
         self.tile_size = tile_size
         

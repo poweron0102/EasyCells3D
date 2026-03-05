@@ -1,9 +1,6 @@
-import math
-
-import raylibpy as rl
+import pyray as rl
 
 from .Camera2D import Renderable2D
-from .Component import Transform
 
 
 class Sprite(Renderable2D):
@@ -12,12 +9,12 @@ class Sprite(Renderable2D):
     index_y: int = 0
     size: tuple[int, int] = (0, 0)
 
-    def __init__(self, image_path: str | rl.Texture2D, size: tuple[int, int] = None):
+    def __init__(self, image: str | rl.Texture2D, size: tuple[int, int] = None):
         super().__init__()
-        if isinstance(image_path, rl.Texture2D):
-            self.texture = image_path
+        if isinstance(image, str):
+            self.texture = rl.load_texture(f"Assets/{image}")
         else:
-            self.texture = rl.load_texture(f"Assets/{image_path}")
+            self.texture = image
 
         self.size = size if size else (self.texture.width, self.texture.height)
 

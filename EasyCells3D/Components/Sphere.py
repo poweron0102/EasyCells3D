@@ -1,6 +1,6 @@
 import math
 
-import raylibpy as rl
+import pyray as rl
 
 from EasyCells3D.Components import Transform
 from EasyCells3D.Components.Camera3D import Renderable3D
@@ -8,7 +8,7 @@ from EasyCells3D.Components.Camera3D import Renderable3D
 
 class Sphere(Renderable3D):
     model: rl.Model = None
-    texture: rl.Texture2D = None
+    texture: rl.Texture = None
 
     def __init__(self, radius: float = 0.5, color: rl.Color = rl.WHITE, rings: int = 16, slices: int = 16, texture_path: str = None, shader: rl.Shader = None):
         super().__init__()

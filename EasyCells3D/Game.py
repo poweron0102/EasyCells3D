@@ -3,7 +3,7 @@ from importlib import import_module
 from types import ModuleType
 from typing import Callable, TYPE_CHECKING
 
-import raylibpy as rl
+import pyray as rl
 
 from EasyCells3D.NewGame import NewGame
 

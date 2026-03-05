@@ -1,4 +1,4 @@
-import raylibpy as rl
+import pyray as rl
 from EasyCells3D import Tick
 from EasyCells3D.Components import Component, Camera3D
 from EasyCells3D.Geometry import Vec3, Quaternion

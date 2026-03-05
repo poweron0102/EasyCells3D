@@ -4,7 +4,7 @@ from EasyCells3D.Components import TileMap, TileMapRenderer
 from EasyCells3D.Geometry import Vec3
 from EasyCells3D.PhysicsComponents import Rigidbody, Collider, RectCollider, TileMapCollider
 
-import raylibpy as rl
+import pyray as rl
 
 # --- Global variables for easy access in the loop ---
 player: Item

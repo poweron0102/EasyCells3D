@@ -3,7 +3,7 @@ import traceback
 from typing import TYPE_CHECKING
 from typing import Type
 
-import raylibpy as rl
+import pyray as rl
 
 from ..Geometry import Vec3, Quaternion, Vec2
 from ..NewGame import NewGame

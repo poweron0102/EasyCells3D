@@ -1,11 +1,11 @@
 """
 Dependencies:
-    - raylib-py
+    - raylib
     - numpy
     - numba
     - scipy
 
-    pip install raylib-py numpy numba scipy
+    pip install raylib numpy numba scipy
 """
 # import asyncio
 

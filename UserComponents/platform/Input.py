@@ -1,6 +1,6 @@
 from enum import Enum
 
-import raylibpy as rl
+import pyray as rl
 
 from EasyCells3D import Vec2
 
@@ -36,22 +36,22 @@ class Input:
         value = Vec2(0, 0)
 
         if self.controller_type == ControllerType.KEYBOARD:
-            if rl.is_key_down(rl.KEY_RIGHT) or rl.is_key_down(rl.KEY_D):
+            if rl.is_key_down(rl.KeyboardKey.KEY_RIGHT) or rl.is_key_down(rl.KeyboardKey.KEY_D):
                 value.x = 1.0
-            if rl.is_key_down(rl.KEY_LEFT) or rl.is_key_down(rl.KEY_A):
+            if rl.is_key_down(rl.KeyboardKey.KEY_LEFT) or rl.is_key_down(rl.KeyboardKey.KEY_A):
                 value.x = -1.0
 
-            if rl.is_key_down(rl.KEY_UP) or rl.is_key_down(rl.KEY_W):
+            if rl.is_key_down(rl.KeyboardKey.KEY_UP) or rl.is_key_down(rl.KeyboardKey.KEY_W):
                 value.y = 1.0
-            if rl.is_key_down(rl.KEY_DOWN) or rl.is_key_down(rl.KEY_S):
+            if rl.is_key_down(rl.KeyboardKey.KEY_DOWN) or rl.is_key_down(rl.KeyboardKey.KEY_S):
                 value.y = -1.0
 
             return value.normalize()
 
         # Gamepad
         if rl.is_gamepad_available(self.gamepad_id):
-            value.x = rl.get_gamepad_axis_movement(self.gamepad_id, rl.GAMEPAD_AXIS_LEFT_X)
-            value.y = rl.get_gamepad_axis_movement(self.gamepad_id, rl.GAMEPAD_AXIS_LEFT_Y)
+            value.x = rl.get_gamepad_axis_movement(self.gamepad_id, rl.GamepadAxis.GAMEPAD_AXIS_LEFT_X)
+            value.y = rl.get_gamepad_axis_movement(self.gamepad_id, rl.GamepadAxis.GAMEPAD_AXIS_LEFT_Y)
 
             return value
 
@@ -66,15 +66,15 @@ class Input:
         PAUSE = ESQ or Start
         """
         if self.controller_type == ControllerType.KEYBOARD:
-            if action == Action.JUMP: return rl.is_key_pressed(rl.KEY_SPACE)
-            if action == Action.RUN: return rl.is_key_pressed(rl.KEY_LEFT_CONTROL)
-            if action == Action.ATTACK: return rl.is_mouse_button_pressed(rl.MOUSE_BUTTON_LEFT)
-            if action == Action.PAUSE: return rl.is_key_pressed(rl.KEY_ESCAPE)
+            if action == Action.JUMP: return rl.is_key_pressed(rl.KeyboardKey.KEY_SPACE)
+            if action == Action.RUN: return rl.is_key_pressed(rl.KeyboardKey.KEY_LEFT_CONTROL)
+            if action == Action.ATTACK: return rl.is_mouse_button_pressed(rl.MouseButton.MOUSE_BUTTON_LEFT)
+            if action == Action.PAUSE: return rl.is_key_pressed(rl.KeyboardKey.KEY_ESCAPE)
         elif rl.is_gamepad_available(self.gamepad_id):
-            if action == Action.JUMP: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GAMEPAD_BUTTON_RIGHT_FACE_DOWN)
-            if action == Action.RUN: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GAMEPAD_BUTTON_RIGHT_TRIGGER_1)
-            if action == Action.ATTACK: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GAMEPAD_BUTTON_RIGHT_FACE_LEFT)
-            if action == Action.PAUSE: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GAMEPAD_BUTTON_MIDDLE_RIGHT)
+            if action == Action.JUMP: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_RIGHT_FACE_DOWN)
+            if action == Action.RUN: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_RIGHT_TRIGGER_1)
+            if action == Action.ATTACK: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_RIGHT_FACE_LEFT)
+            if action == Action.PAUSE: return rl.is_gamepad_button_pressed(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_MIDDLE_RIGHT)
 
         return False
 
@@ -87,15 +87,15 @@ class Input:
         PAUSE = ESQ or Start
         """
         if self.controller_type == ControllerType.KEYBOARD:
-            if action == Action.JUMP: return rl.is_key_down(rl.KEY_SPACE)
-            if action == Action.RUN: return rl.is_key_down(rl.KEY_LEFT_CONTROL)
-            if action == Action.ATTACK: return rl.is_mouse_button_down(rl.MOUSE_BUTTON_LEFT)
-            if action == Action.PAUSE: return rl.is_key_down(rl.KEY_ESCAPE)
+            if action == Action.JUMP: return rl.is_key_down(rl.KeyboardKey.KEY_SPACE)
+            if action == Action.RUN: return rl.is_key_down(rl.KeyboardKey.KEY_LEFT_CONTROL)
+            if action == Action.ATTACK: return rl.is_mouse_button_down(rl.MouseButton.MOUSE_BUTTON_LEFT)
+            if action == Action.PAUSE: return rl.is_key_down(rl.KeyboardKey.KEY_ESCAPE)
         elif rl.is_gamepad_available(self.gamepad_id):
-            if action == Action.JUMP: return rl.is_gamepad_button_down(self.gamepad_id, rl.GAMEPAD_BUTTON_RIGHT_FACE_DOWN)
-            if action == Action.RUN: return rl.is_gamepad_button_down(self.gamepad_id, rl.GAMEPAD_BUTTON_RIGHT_TRIGGER_1)
-            if action == Action.ATTACK: return rl.is_gamepad_button_down(self.gamepad_id, rl.GAMEPAD_BUTTON_RIGHT_FACE_LEFT)
-            if action == Action.PAUSE: return rl.is_gamepad_button_down(self.gamepad_id, rl.GAMEPAD_BUTTON_MIDDLE_RIGHT)
+            if action == Action.JUMP: return rl.is_gamepad_button_down(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_RIGHT_FACE_DOWN)
+            if action == Action.RUN: return rl.is_gamepad_button_down(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_RIGHT_TRIGGER_1)
+            if action == Action.ATTACK: return rl.is_gamepad_button_down(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_RIGHT_FACE_LEFT)
+            if action == Action.PAUSE: return rl.is_gamepad_button_down(self.gamepad_id, rl.GamepadButton.GAMEPAD_BUTTON_MIDDLE_RIGHT)
 
         return False
 

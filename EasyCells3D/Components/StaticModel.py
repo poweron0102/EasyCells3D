@@ -1,7 +1,6 @@
-from EasyCells3D.Components import Transform
-from EasyCells3D.Components.Camera3D import Renderable3D
+import pyray as rl
 
-import raylibpy as rl
+from EasyCells3D.Components.Camera3D import Renderable3D
 
 
 class StaticModel(Renderable3D):

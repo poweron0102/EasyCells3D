@@ -1,5 +1,5 @@
 from .Collider import Collider, Polygon
-import raylibpy as rl
+import pyray as rl
 
 
 class RectCollider(Collider):

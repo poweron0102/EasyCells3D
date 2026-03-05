@@ -1,5 +1,5 @@
 import math
-import raylibpy as rl
+import pyray as rl
 
 from .Component import Component, Transform
 from ..Game import Camera
@@ -74,7 +74,7 @@ class Camera2D(Component, Camera):
             rl.begin_texture_mode(self.render_target)
             rl.clear_background(rl.BLANK)
 
-        rl.begin_mode2d(self.rl_camera)
+        rl.begin_mode_2d(self.rl_camera)
 
         self.renderables.sort(key=lambda r: r.transform.position.z)
 
@@ -93,13 +93,13 @@ class Camera2D(Component, Camera):
 
         for polygon_data in self.debug_polygon:
             points_vec, color = polygon_data
-            points = [rl.Vector2(p.x, p.y) for p in points_vec]
-            point_count = len(points)
-            points_array = (rl.Vector2 * point_count)(*points)
-            rl.draw_line_strip(points_array, point_count, color)
+            for i in range(len(points_vec) - 1):
+                p1 = points_vec[i]
+                p2 = points_vec[i + 1]
+                rl.draw_line(int(p1.x), int(p1.y), int(p2.x), int(p2.y), color)
         self.debug_polygon.clear()
 
-        rl.end_mode2d()
+        rl.end_mode_2d()
 
         if self.render_target:
             rl.end_texture_mode()
@@ -114,5 +114,5 @@ class Camera2D(Component, Camera):
             return Vec2.zero()
         
         mouse_pos = rl.get_mouse_position()
-        world_pos = rl.get_screen_to_world2d(mouse_pos, Camera2D.main.rl_camera)
+        world_pos = rl.get_screen_to_world_2d(mouse_pos, Camera2D.main.rl_camera)
         return Vec2(world_pos.x, world_pos.y)

@@ -1,4 +1,4 @@
-import raylibpy as rl
+import pyray as rl
 
 from EasyCells3D.Components import Component, Transform
 from EasyCells3D.Game import Camera
@@ -76,12 +76,12 @@ class Camera3D(Component, Camera):
             rl.begin_texture_mode(self.render_target)
             rl.clear_background(rl.BLANK)
 
-        rl.begin_mode3d(self.rl_camera)
+        rl.begin_mode_3d(self.rl_camera)
 
         for ren in self.renderables:
             ren.render()
 
-        rl.end_mode3d()
+        rl.end_mode_3d()
 
         if self.render_target:
             rl.end_texture_mode()

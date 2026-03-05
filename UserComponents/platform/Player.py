@@ -1,4 +1,4 @@
-import raylibpy as rl
+import pyray as rl
 
 from EasyCells3D import Game, Vec2
 from EasyCells3D.Components import Item, Animation2D, Sprite, Animator2D, Component
