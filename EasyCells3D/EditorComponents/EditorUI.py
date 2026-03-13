@@ -156,10 +156,26 @@ class EditorUI(RenderableUI):
 
         # 1. GAME CANVAS
         canvas_rect = rl.Rectangle(canvas_x, canvas_y, canvas_w, canvas_h)
+
+        # Redimensionamento e Desenho do Render Target
+        target_w = int(canvas_w)
+        target_h = int(canvas_h)
+
+        if self.running_game.render_target and target_w > 0 and target_h > 0:
+            rt = self.running_game.render_target
+
+            # Se o tamanho do canvas mudou, recria o render target para manter a resolução correta e proporção
+            if rt.texture.width != target_w or rt.texture.height != target_h:
+                rl.unload_render_texture(rt)
+                self.running_game.render_target = rl.load_render_texture(target_w, target_h)
+                rt = self.running_game.render_target
+
+            # Desenha a textura do jogo (Invertida no eixo Y devido ao sistema de coordenadas OpenGL)
+            source_rec = rl.Rectangle(0, 0, rt.texture.width, -rt.texture.height)
+            dest_rec = rl.Rectangle(canvas_x, canvas_y, float(target_w), float(target_h))
+            rl.draw_texture_pro(rt.texture, source_rec, dest_rec, rl.Vector2(0, 0), 0.0, rl.WHITE)
+
         rl.draw_rectangle_lines_ex(canvas_rect, 2, rl.BLACK)
-        text_size = int(canvas_w * 0.05)  # Texto escala com o canvas
-        rl.draw_text("Game canvas", int(canvas_x + canvas_w / 2 - text_size * 3), int(canvas_y + canvas_h / 2),
-                     text_size, rl.LIGHTGRAY)
 
         # 2. CÂMERA CONFIGS
         cam_rect = rl.Rectangle(cam_x, cam_y, cam_w, cam_h)

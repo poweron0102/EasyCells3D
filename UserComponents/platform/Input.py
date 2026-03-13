@@ -1,11 +1,11 @@
-from enum import Enum
+from enum import IntEnum
 
 import pyray as rl
 
 from EasyCells3D import Vec2
 
 
-class ControllerType(Enum):
+class ControllerType(IntEnum):
     KEYBOARD = 0
     GAMEPAD1 = 1
     GAMEPAD2 = 2
@@ -13,7 +13,7 @@ class ControllerType(Enum):
     GAMEPAD4 = 4
 
 
-class Action(Enum):
+class Action(IntEnum):
     JUMP = 0
     RUN = 1
     ATTACK = 2

@@ -147,7 +147,7 @@ class Game:
 
             # Início do frame de renderização
             rl.begin_drawing()
-            rl.clear_background(rl.BLANK)
+            rl.clear_background(rl.Color(30, 30, 30, 255))
 
             for camera in self.cameras:
                 camera.render()
