@@ -1,10 +1,9 @@
-from EasyCells3D import Game, Vec2
-from EasyCells3D.Components import Item, Camera2D, Animation2D, Animator2D, Sprite, TileMap
-from EasyCells3D.Components import TileMap, TileMapRenderer
-from EasyCells3D.Geometry import Vec3
-from EasyCells3D.PhysicsComponents import Rigidbody, Collider, RectCollider, TileMapCollider
-
 import pyray as rl
+
+from EasyCells3D import Game, Vec2
+from EasyCells3D.Components import Item, Camera2D, Animation2D, Animator2D, Sprite
+from EasyCells3D.Components import TileMap, TileMapRenderer
+from EasyCells3D.PhysicsComponents import Rigidbody, Collider, RectCollider, TileMapCollider
 
 # --- Global variables for easy access in the loop ---
 player: Item

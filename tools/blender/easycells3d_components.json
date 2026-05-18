@@ -1,0 +1,14 @@
+{
+  "components": [
+    {
+      "name": "RotatingObj",
+      "class": "UserComponents.ratating_obj.RotatingObj",
+      "fields": {
+        "speed": {
+          "type": "float",
+          "default": 1.0
+        }
+      }
+    }
+  ]
+}
