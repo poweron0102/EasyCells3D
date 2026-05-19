@@ -70,6 +70,7 @@ class SceneLoader:
                     base_path=".",
                     mesh_index=mesh_indices,
                     shared=True,
+                    baked_transform=item.global_transform_get().clone(),
                 ))
 
             for child_index in node.get("children", []):
@@ -78,7 +79,7 @@ class SceneLoader:
             return item
 
         root_items = [create_node(node_index) for node_index in root_node_indices]
-        if root_items and mesh_draw_indices:
+        if root_items and mesh_draw_indices and not _scene_has_configured_components(nodes):
             root_items[0].AddComponent(StaticModel(
                 str(scene_path),
                 base_path=".",
@@ -264,6 +265,10 @@ def _extract_component_defs(node: dict) -> list[dict]:
         warnings.warn(f"SceneLoader: components deve ser lista em '{node.get('name', '<sem nome>')}'")
         return []
     return [entry for entry in raw_components if isinstance(entry, dict)]
+
+
+def _scene_has_configured_components(nodes: list[dict]) -> bool:
+    return any(_extract_component_defs(node) for node in nodes)
 
 
 def _extract_easycells_id(node: dict) -> str | None:

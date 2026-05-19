@@ -9,6 +9,7 @@ class RotatingObj(Component):
     speed = SerializeField(default=1.0)
 
     def init(self):
+        print(f"RotatingObj initialized with speed: {self.speed} degrees per second")
         self.speed = math.radians(float(self.speed))
 
     def loop(self):

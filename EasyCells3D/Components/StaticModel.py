@@ -4,6 +4,7 @@ from typing import ClassVar
 
 import pyray as rl
 
+from EasyCells3D.Components.Component import Transform
 from EasyCells3D.Components.Camera3D import Renderable3D
 
 
@@ -39,6 +40,7 @@ class StaticModel(Renderable3D):
             material_index: int | None = None,
             shared: bool = False,
             fallback_only: bool = False,
+            baked_transform: Transform | None = None,
     ):
         super().__init__()
         self.model_path = model_path
@@ -48,6 +50,7 @@ class StaticModel(Renderable3D):
         self.material_index = material_index
         self.shared = shared
         self.fallback_only = fallback_only
+        self.baked_transform = baked_transform
         self.resolved_model_path: str | None = None
         self.model: rl.Model = None
         self._render_warning_printed = False
@@ -142,13 +145,15 @@ class StaticModel(Renderable3D):
 
     def _draw_meshes_ex(self, pos: rl.Vector3, axis: rl.Vector3, angle: float, scale: rl.Vector3) -> bool:
         try:
-            mesh_count = int(getattr(self.model, "mesh_count", 0))
-            material_count = int(getattr(self.model, "material_count", 0))
+            mesh_count = self._model_count("mesh")
+            material_count = self._model_count("material")
             transform = rl.matrix_multiply(
-                rl.matrix_scale(scale.x, scale.y, scale.z),
+                rl.matrix_translate(pos.x, pos.y, pos.z),
                 rl.matrix_rotate(axis, math.radians(angle)),
             )
-            transform = rl.matrix_multiply(transform, rl.matrix_translate(pos.x, pos.y, pos.z))
+            transform = rl.matrix_multiply(transform, rl.matrix_scale(scale.x, scale.y, scale.z))
+            if self.baked_transform is not None:
+                transform = rl.matrix_multiply(transform, self._inverse_transform_matrix(self.baked_transform))
 
             for mesh_index in self.mesh_indices:
                 if mesh_index < 0 or mesh_index >= mesh_count:
@@ -171,10 +176,33 @@ class StaticModel(Renderable3D):
             )
             return False
 
+    def _model_count(self, name: str) -> int:
+        snake_name = f"{name}_count"
+        camel_name = f"{name}Count"
+        return int(getattr(self.model, snake_name, getattr(self.model, camel_name, 0)) or 0)
+
+    def _inverse_transform_matrix(self, transform: Transform):
+        inv_scale = rl.matrix_scale(
+            1.0 / transform.scale.x if transform.scale.x else 0.0,
+            1.0 / transform.scale.y if transform.scale.y else 0.0,
+            1.0 / transform.scale.z if transform.scale.z else 0.0,
+        )
+        axis, angle = quaternion_to_axis_angle(transform.rotation.inverse())
+        inv_rotation = rl.matrix_rotate(axis, math.radians(angle))
+        inv_translation = rl.matrix_translate(
+            -transform.position.x,
+            -transform.position.y,
+            -transform.position.z,
+        )
+        matrix = rl.matrix_multiply(inv_scale, inv_rotation)
+        return rl.matrix_multiply(matrix, inv_translation)
+
     def _material_index_for_mesh(self, mesh_index: int, material_count: int) -> int:
         material_index = self.material_index
         if material_index is None:
             mesh_material = getattr(self.model, "mesh_material", None)
+            if mesh_material is None:
+                mesh_material = getattr(self.model, "meshMaterial", None)
             if mesh_material is not None:
                 material_index = int(mesh_material[mesh_index])
         if material_index is None:

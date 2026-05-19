@@ -8,6 +8,7 @@ bl_info = {
 
 import importlib.util
 import json
+import shlex
 import subprocess
 import sys
 import uuid
@@ -287,11 +288,14 @@ class EC3D_OT_export_scene(bpy.types.Operator):
         prefs.status_message = f"Exported {export_path}"
 
         if self.run_after_export:
-            command = [prefs.python_command, prefs.main_script]
-            if prefs.run_args.strip():
-                command.extend(prefs.run_args.split())
-            subprocess.Popen(command, cwd=str(project_root))
-            prefs.status_message = f"Exported and launched {prefs.main_script}"
+            try:
+                command = _run_command(prefs, project_root)
+                subprocess.Popen(command, cwd=str(project_root))
+                prefs.status_message = f"Exported and launched {prefs.main_script}"
+            except Exception as exc:
+                prefs.status_message = f"Exported, but run failed: {exc}"
+                self.report({"ERROR"}, prefs.status_message)
+                return {"CANCELLED"}
 
         return {"FINISHED"}
 
@@ -422,6 +426,52 @@ def _operator_property_ids(operator):
         return {prop.identifier for prop in operator.get_rna_type().properties}
     except Exception:
         return set()
+
+
+def _run_command(prefs, project_root):
+    python_command = _resolve_python_command(prefs.python_command, project_root)
+    main_script = _resolve_path_text(prefs.main_script, project_root)
+    command = [str(python_command), str(main_script)]
+    if prefs.run_args.strip():
+        command.extend(shlex.split(prefs.run_args))
+    return command
+
+
+def _resolve_python_command(value, project_root):
+    raw = (value or "python").strip().strip('"')
+    path = Path(bpy.path.abspath(raw))
+    if not path.is_absolute():
+        path = project_root / path
+
+    if path.is_dir():
+        candidates = [
+            path / "Scripts" / "python.exe",
+            path / "python.exe",
+            path / "bin" / "python",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+
+    if path.name.lower() in {"activate", "activate.bat", "activate.ps1"}:
+        candidate = path.parent / "python.exe"
+        if candidate.exists():
+            return candidate
+
+    if path.exists():
+        return path
+
+    if raw in {"python", "py", "python.exe", "py.exe"}:
+        return raw
+
+    raise FileNotFoundError(f"Python command not found: {path}")
+
+
+def _resolve_path_text(value, project_root):
+    path = Path(bpy.path.abspath((value or "").strip().strip('"')))
+    if not path.is_absolute():
+        path = project_root / path
+    return path
 
 
 def _load_discovery_module(project_root):

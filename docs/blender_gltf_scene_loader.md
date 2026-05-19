@@ -209,6 +209,8 @@ O botao `Export & Run` faz tudo acima e executa o script principal configurado, 
 - Referencia quebrou apos renomear objeto: reexporte pelo add-on para garantir que o `easycells_id` esteja salvo.
 - Dependencias do jogo faltam no Blender: o refresh usa AST e nao deve importa-las; se falhar, confira se `EasyCells3D/ComponentDiscovery.py` existe na raiz configurada.
 
-## Limitacao Atual
+## Observacao Sobre Render de GLB
 
-O loader cria os `Items` e adiciona `StaticModel` nos nodes com mesh. Para cenas GLTF/GLB, o `StaticModel` usa cache compartilhado por arquivo e tenta desenhar apenas as meshes/primitives correspondentes ao node carregado. Se a versao do binding `pyray` nao expuser acesso direto a `model.meshes`/`model.materials`, ele cai automaticamente para `draw_model_ex`, preservando compatibilidade.
+O loader cria os `Items` e adiciona `StaticModel` nos nodes com mesh. Para cenas GLTF/GLB, o `StaticModel` usa cache compartilhado por arquivo e desenha as meshes/primitives correspondentes ao node carregado. O codigo aceita os nomes de campos usados por diferentes versoes do binding `pyray`, como `mesh_count`/`meshCount`, `material_count`/`materialCount` e `mesh_material`/`meshMaterial`.
+
+Se uma versao futura do binding nao expuser acesso direto a `model.meshes`/`model.materials`, o `StaticModel` ainda pode cair para `draw_model_ex` como fallback de compatibilidade.
