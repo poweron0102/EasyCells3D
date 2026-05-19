@@ -1,14 +1,349 @@
 {
   "components": [
     {
+      "name": "Animator2D",
+      "class_path": "EasyCells3D.Components.Animator2D.Animator2D",
+      "module": "EasyCells3D.Components.Animator2D",
+      "required_args": [
+        {
+          "name": "dict_animations",
+          "type": "dict[str, Animation2D]",
+          "default": null,
+          "required": true
+        },
+        {
+          "name": "current_animation",
+          "type": "str",
+          "default": null,
+          "required": true
+        }
+      ],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "Animator3D",
+      "class_path": "EasyCells3D.Components.Animator3D.Animator3D",
+      "module": "EasyCells3D.Components.Animator3D",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "current_animation",
+          "type": "str | None",
+          "default": null,
+          "required": false
+        },
+        {
+          "name": "speed",
+          "type": "float",
+          "default": 1.0,
+          "required": false
+        },
+        {
+          "name": "autoplay",
+          "type": "bool",
+          "default": true,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "Renderable2D",
+      "class_path": "EasyCells3D.Components.Camera2D.Renderable2D",
+      "module": "EasyCells3D.Components.Camera2D",
+      "required_args": [],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "Camera2D",
+      "class_path": "EasyCells3D.Components.Camera2D.Camera2D",
+      "module": "EasyCells3D.Components.Camera2D",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "zoom",
+          "type": "float",
+          "default": 1.0,
+          "required": false
+        },
+        {
+          "name": "render_target",
+          "type": "rl.RenderTexture",
+          "default": null,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "Renderable3D",
+      "class_path": "EasyCells3D.Components.Camera3D.Renderable3D",
+      "module": "EasyCells3D.Components.Camera3D",
+      "required_args": [],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "Camera3D",
+      "class_path": "EasyCells3D.Components.Camera3D.Camera3D",
+      "module": "EasyCells3D.Components.Camera3D",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "vfov",
+          "type": "float",
+          "default": 60.0,
+          "required": false
+        },
+        {
+          "name": "projection",
+          "type": "int",
+          "default": "rl.CameraProjection.CAMERA_PERSPECTIVE",
+          "required": false
+        },
+        {
+          "name": "render_target",
+          "type": "rl.RenderTexture",
+          "default": null,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "RenderableUI",
+      "class_path": "EasyCells3D.Components.CameraUI.RenderableUI",
+      "module": "EasyCells3D.Components.CameraUI",
+      "required_args": [],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "CameraUI",
+      "class_path": "EasyCells3D.Components.CameraUI.CameraUI",
+      "module": "EasyCells3D.Components.CameraUI",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "render_target",
+          "type": "rl.RenderTexture",
+          "default": null,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "EmptyComponent",
+      "class_path": "EasyCells3D.Components.EmptyComponent.EmptyComponent",
+      "module": "EasyCells3D.Components.EmptyComponent",
+      "required_args": [],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "FreeCam",
+      "class_path": "EasyCells3D.Components.FreeCam.FreeCam",
+      "module": "EasyCells3D.Components.FreeCam",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "speed",
+          "type": "float",
+          "default": 4.0,
+          "required": false
+        },
+        {
+          "name": "mouse_sensitivity",
+          "type": "float",
+          "default": 0.2,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "TileMap",
+      "class_path": "EasyCells3D.Components.TileMap.TileMap",
+      "module": "EasyCells3D.Components.TileMap",
+      "required_args": [
+        {
+          "name": "matrix",
+          "type": "list[list[int]]",
+          "default": null,
+          "required": true
+        }
+      ],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "Collider",
+      "class_path": "EasyCells3D.PhysicsComponents.Collider.Collider",
+      "module": "EasyCells3D.PhysicsComponents.Collider",
+      "required_args": [
+        {
+          "name": "polygons",
+          "type": "List[Polygon]",
+          "default": null,
+          "required": true
+        }
+      ],
+      "optional_args": [
+        {
+          "name": "mask",
+          "type": "int",
+          "default": 1,
+          "required": false
+        },
+        {
+          "name": "debug",
+          "type": "bool",
+          "default": false,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "Rigidbody",
+      "class_path": "EasyCells3D.PhysicsComponents.Rigidbody.Rigidbody",
+      "module": "EasyCells3D.PhysicsComponents.Rigidbody",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "mass",
+          "type": "float",
+          "default": 1.0,
+          "required": false
+        },
+        {
+          "name": "use_gravity",
+          "type": "bool",
+          "default": true,
+          "required": false
+        },
+        {
+          "name": "is_kinematic",
+          "type": "bool",
+          "default": false,
+          "required": false
+        },
+        {
+          "name": "drag",
+          "type": "float",
+          "default": 0.05,
+          "required": false
+        },
+        {
+          "name": "angular_drag",
+          "type": "float",
+          "default": 0.05,
+          "required": false
+        },
+        {
+          "name": "gravity_scale",
+          "type": "float",
+          "default": 1.0,
+          "required": false
+        },
+        {
+          "name": "restitution",
+          "type": "float",
+          "default": 0.5,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
+      "name": "NetworkComponent",
+      "class_path": "EasyCells3D.NetworkComponents.NetworkComponent.NetworkComponent",
+      "module": "EasyCells3D.NetworkComponents.NetworkComponent",
+      "required_args": [
+        {
+          "name": "identifier",
+          "type": "int",
+          "default": null,
+          "required": true
+        },
+        {
+          "name": "owner",
+          "type": "int",
+          "default": null,
+          "required": true
+        }
+      ],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "NetworkManager",
+      "class_path": "EasyCells3D.NetworkComponents.NetworkComponent.NetworkManager",
+      "module": "EasyCells3D.NetworkComponents.NetworkComponent",
+      "required_args": [
+        {
+          "name": "ip",
+          "type": "str",
+          "default": null,
+          "required": true
+        },
+        {
+          "name": "port",
+          "type": "int",
+          "default": null,
+          "required": true
+        },
+        {
+          "name": "is_server",
+          "type": "bool",
+          "default": null,
+          "required": true
+        }
+      ],
+      "optional_args": [
+        {
+          "name": "connect_callback",
+          "type": "Callable[[int], None]",
+          "default": null,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
       "name": "RotatingObj",
-      "class": "UserComponents.ratating_obj.RotatingObj",
+      "class_path": "UserComponents.ratating_obj.RotatingObj",
+      "module": "UserComponents.ratating_obj",
+      "required_args": [],
+      "optional_args": [],
       "fields": {
         "speed": {
+          "name": "speed",
           "type": "float",
-          "default": 1.0
+          "default": 1.0,
+          "ref": null,
+          "metadata": {}
         }
       }
+    },
+    {
+      "name": "OneWayPlatform",
+      "class_path": "UserComponents.platform.OneWayPlatform.OneWayPlatform",
+      "module": "UserComponents.platform.OneWayPlatform",
+      "required_args": [],
+      "optional_args": [],
+      "fields": {}
+    },
+    {
+      "name": "Player",
+      "class_path": "UserComponents.platform.Player.Player",
+      "module": "UserComponents.platform.Player",
+      "required_args": [],
+      "optional_args": [],
+      "fields": {}
     }
   ]
 }

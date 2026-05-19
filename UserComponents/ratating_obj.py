@@ -2,22 +2,14 @@ import math
 
 from EasyCells3D.Components import Component
 from EasyCells3D.Geometry import Quaternion, Vec3
+from EasyCells3D.Serialization import SerializeField
 
 
 class RotatingObj(Component):
-    blender_fields = {
-        "speed": {
-            "type": "float",
-            "default": 1.0
-        }
-    }
+    speed = SerializeField(default=1.0)
 
-    def __init__(self, speed: float):
-        self.speed = math.radians(speed)
-
-    @staticmethod
-    def from_config(config, context):
-        return RotatingObj(speed=float(config.get("speed", 1.0)))
+    def init(self):
+        self.speed = math.radians(float(self.speed))
 
     def loop(self):
         angle_this_frame = self.speed * self.game.delta_time

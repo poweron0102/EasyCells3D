@@ -3,6 +3,7 @@ from .NewGame import NewGame
 from .Game import Game
 from .SceneLoader import SceneLoader
 from .ComponentRegistry import ComponentCreationContext, ComponentRegistry
+from .Serialization import SerializeField
 from .scheduler import Scheduler, Tick
 
 __all__ = [
@@ -12,6 +13,7 @@ __all__ = [
     "SceneLoader",
     "ComponentCreationContext",
     "ComponentRegistry",
+    "SerializeField",
     "Scheduler",
     "Tick",
     "Components",

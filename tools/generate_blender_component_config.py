@@ -1,5 +1,5 @@
-import importlib
 import json
+import importlib.util
 import sys
 from pathlib import Path
 
@@ -8,37 +8,25 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-COMPONENTS = [
-    "UserComponents.ratating_obj.RotatingObj",
-]
-
-
-def load_class(path: str):
-    module_name, class_name = path.rsplit(".", 1)
-    module = importlib.import_module(module_name)
-    return getattr(module, class_name)
+DISCOVERY_PATH = REPO_ROOT / "EasyCells3D" / "ComponentDiscovery.py"
+spec = importlib.util.spec_from_file_location("easycells3d_component_discovery", DISCOVERY_PATH)
+discovery = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = discovery
+spec.loader.exec_module(discovery)
 
 
 def main():
+    components = discovery.discover_components(project_root=REPO_ROOT, mode="ast")
     output = {
-        "components": []
+        "components": [component.to_dict() for component in components]
     }
-    for class_path in COMPONENTS:
-        component_cls = load_class(class_path)
-        fields = getattr(component_cls, "blender_fields", None)
-        if not fields:
-            continue
-        output["components"].append({
-            "name": component_cls.__name__,
-            "class": class_path,
-            "fields": fields,
-        })
 
     output_path = REPO_ROOT / "tools/blender/easycells3d_components.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as file:
         json.dump(output, file, indent=2)
         file.write("\n")
+    print(f"{len(components)} components written to {output_path}")
 
 
 if __name__ == "__main__":

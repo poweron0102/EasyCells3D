@@ -2,6 +2,7 @@ import json
 import math
 import struct
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,15 @@ import numpy as np
 from EasyCells3D.ComponentRegistry import ComponentCreationContext, ComponentRegistry
 from EasyCells3D.Components import Item, StaticModel, Transform
 from EasyCells3D.Geometry import Quaternion, Vec3
+from EasyCells3D.Serialization import get_serialized_fields
+
+
+@dataclass
+class _PendingSerializedFields:
+    item: Item
+    component: Any
+    component_def: dict
+    context: ComponentCreationContext
 
 
 class SceneLoader:
@@ -20,6 +30,7 @@ class SceneLoader:
     def load(self, path: str | Path) -> list[Item]:
         scene_path = Path(path)
         document = _load_gltf_document(scene_path)
+        self.component_registry.ensure_discovered(_find_project_root(scene_path))
         nodes = document.get("nodes", [])
         scene_index = document.get("scene", 0)
         scenes = document.get("scenes", [])
@@ -27,6 +38,7 @@ class SceneLoader:
 
         objects_by_name: dict[str, Item] = {}
         objects_by_node_index: dict[int, Item] = {}
+        objects_by_easycells_id: dict[str, Item] = {}
 
         mesh_draw_indices: dict[int, int] = {}
         next_draw_index = 0
@@ -41,6 +53,10 @@ class SceneLoader:
             unique_name = _unique_name(item.name, objects_by_name)
             objects_by_name[unique_name] = item
             objects_by_node_index[node_index] = item
+            easycells_id = _extract_easycells_id(node)
+            if easycells_id:
+                item.easycells_id = easycells_id
+                objects_by_easycells_id[easycells_id] = item
 
             if "mesh" in node:
                 mesh_index = int(node["mesh"])
@@ -70,6 +86,7 @@ class SceneLoader:
                 fallback_only=True,
             ))
 
+        pending_fields: list[_PendingSerializedFields] = []
         for node_index, item in list(objects_by_node_index.items()):
             context = ComponentCreationContext(
                 game=self.game,
@@ -78,26 +95,60 @@ class SceneLoader:
                 scene_path=str(scene_path),
                 objects_by_name=objects_by_name,
                 objects_by_node_index=objects_by_node_index,
+                objects_by_easycells_id=objects_by_easycells_id,
             )
-            self._add_configured_components(item, nodes[node_index], context)
+            pending_fields.extend(self._add_configured_components(item, nodes[node_index], context))
+
+        for pending in pending_fields:
+            self._apply_serialized_fields(pending)
 
         return root_items
 
-    def _add_configured_components(self, item: Item, node: dict, context: ComponentCreationContext) -> None:
+    def _add_configured_components(
+        self,
+        item: Item,
+        node: dict,
+        context: ComponentCreationContext,
+    ) -> list[_PendingSerializedFields]:
+        pending_fields: list[_PendingSerializedFields] = []
         for component_def in _extract_component_defs(node):
             type_name = component_def.get("type")
-            config = component_def.get("config", {})
+            args = component_def.get("args", {})
             if not type_name:
                 warnings.warn(f"SceneLoader: componente sem 'type' no objeto '{item.name}'")
                 continue
 
             try:
-                component = self.component_registry.create(type_name, config, context)
+                component = self.component_registry.create(type_name, args, context)
                 item.AddComponent(component)
+                pending_fields.append(_PendingSerializedFields(item, component, component_def, context))
             except Exception as exc:
                 warnings.warn(
                     f"SceneLoader: erro ao criar componente '{type_name}' no objeto "
                     f"'{item.name}': {exc}"
+                )
+        return pending_fields
+
+    def _apply_serialized_fields(self, pending: _PendingSerializedFields) -> None:
+        fields = pending.component_def.get("fields") or {}
+        if not isinstance(fields, dict):
+            warnings.warn(
+                f"SceneLoader: fields deve ser objeto em '{pending.item.name}' "
+                f"({pending.component.__class__.__name__})"
+            )
+            return
+
+        declared_fields = get_serialized_fields(pending.component.__class__)
+        for name, raw_value in fields.items():
+            field = declared_fields.get(name)
+            try:
+                value = _resolve_serialized_value(raw_value, field, pending.context)
+                value = _coerce_serialized_value(value, field)
+                setattr(pending.component, name, value)
+            except Exception as exc:
+                warnings.warn(
+                    f"SceneLoader: erro ao aplicar field '{name}' em "
+                    f"{pending.component.__class__.__name__} no objeto '{pending.item.name}': {exc}"
                 )
 
 
@@ -215,6 +266,70 @@ def _extract_component_defs(node: dict) -> list[dict]:
     return [entry for entry in raw_components if isinstance(entry, dict)]
 
 
+def _extract_easycells_id(node: dict) -> str | None:
+    extras = node.get("extras") or {}
+    if isinstance(extras, str):
+        try:
+            extras = json.loads(extras)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(extras, dict):
+        return None
+    value = extras.get("easycells_id")
+    return str(value) if value else None
+
+
+def _resolve_serialized_value(value: Any, field, context: ComponentCreationContext) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    reference = value.get("$id") or value.get("$ref")
+    if reference:
+        item = None
+        if context.objects_by_easycells_id:
+            item = context.objects_by_easycells_id.get(str(reference))
+        if item is None:
+            item = context.objects_by_name.get(str(reference))
+        if item is None:
+            raise KeyError(f"referencia nao encontrada: {reference}")
+
+        component_type = value.get("$component")
+        if component_type:
+            return _find_component_on_item(item, str(component_type))
+        if field is not None and field.ref == "component":
+            component_type = value.get("type") or value.get("component")
+            if component_type:
+                return _find_component_on_item(item, str(component_type))
+        return item
+
+    return value
+
+
+def _find_component_on_item(item: Item, component_type: str):
+    for component in set(item.components.values()):
+        cls = component.__class__
+        if component_type in {cls.__name__, f"{cls.__module__}.{cls.__name__}"}:
+            return component
+    raise KeyError(f"componente '{component_type}' nao encontrado em '{item.name}'")
+
+
+def _coerce_serialized_value(value: Any, field) -> Any:
+    if field is None:
+        return value
+    field_type = field.field_type
+    if field_type == "bool" and not isinstance(value, bool):
+        if isinstance(value, str):
+            return value.lower() in {"1", "true", "yes", "sim"}
+        return bool(value)
+    if field_type == "int" and value is not None:
+        return int(value)
+    if field_type == "float" and value is not None:
+        return float(value)
+    if field_type in {"str", "string"} and value is not None:
+        return str(value)
+    return value
+
+
 def _unique_name(name: str, existing: dict[str, Item]) -> str:
     if name not in existing:
         return name
@@ -230,3 +345,16 @@ def _primitive_count(document: dict[str, Any], mesh_index: int) -> int:
         return 1
     primitives = meshes[mesh_index].get("primitives") or []
     return max(1, len(primitives))
+
+
+def _find_project_root(scene_path: Path) -> Path:
+    candidates = [Path.cwd()]
+    try:
+        candidates.extend(scene_path.resolve().parents)
+    except OSError:
+        candidates.extend(scene_path.absolute().parents)
+
+    for candidate in candidates:
+        if (candidate / "EasyCells3D").is_dir():
+            return candidate
+    return Path.cwd()
