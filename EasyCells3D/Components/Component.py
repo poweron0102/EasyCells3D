@@ -141,8 +141,8 @@ class Item:
         for child in list(self.children):
             child.Destroy()
 
-        for component in list(self.components.keys()):
-            self.components[component].on_destroy()
+        for component in self._unique_components():
+            component.on_destroy()
 
     def update(self):
         if not self.parent:
@@ -150,19 +150,30 @@ class Item:
         self.transform.SetGlobal()
         self._global_transform = Transform.Global
 
-        for component in list(self.components.keys()):
-            if self.components[component].enable:
+        for component in self._unique_components():
+            if component.enable:
                 try:
-                    self.components[component].loop()
+                    component.loop()
                 except (KeyboardInterrupt, SystemExit, NewGame) as e:
                     raise e
                 except Exception as e:
-                    print(f"Error in {self.components[component]}:\n    {e}")
+                    print(f"Error in {component}:\n    {e}")
                     traceback.print_exc()
 
         for child in list(self.children):
             Transform.Global = self.global_transform
             child.update()
+
+    def _unique_components(self) -> list['Component']:
+        components = []
+        seen = set()
+        for component in list(self.components.values()):
+            component_id = id(component)
+            if component_id in seen:
+                continue
+            seen.add(component_id)
+            components.append(component)
+        return components
 
     def AddComponent[T: 'Component'](self, component: T) -> T:
         cls = component.__class__
