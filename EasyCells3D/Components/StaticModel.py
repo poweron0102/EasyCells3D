@@ -148,12 +148,12 @@ class StaticModel(Renderable3D):
             mesh_count = self._model_count("mesh")
             material_count = self._model_count("material")
             transform = rl.matrix_multiply(
-                rl.matrix_translate(pos.x, pos.y, pos.z),
+                rl.matrix_scale(scale.x, scale.y, scale.z),
                 rl.matrix_rotate(axis, math.radians(angle)),
             )
-            transform = rl.matrix_multiply(transform, rl.matrix_scale(scale.x, scale.y, scale.z))
+            transform = rl.matrix_multiply(transform, rl.matrix_translate(pos.x, pos.y, pos.z))
             if self.baked_transform is not None:
-                transform = rl.matrix_multiply(transform, self._inverse_transform_matrix(self.baked_transform))
+                transform = rl.matrix_multiply(self._inverse_transform_matrix(self.baked_transform), transform)
 
             for mesh_index in self.mesh_indices:
                 if mesh_index < 0 or mesh_index >= mesh_count:
@@ -194,8 +194,8 @@ class StaticModel(Renderable3D):
             -transform.position.y,
             -transform.position.z,
         )
-        matrix = rl.matrix_multiply(inv_scale, inv_rotation)
-        return rl.matrix_multiply(matrix, inv_translation)
+        matrix = rl.matrix_multiply(inv_translation, inv_rotation)
+        return rl.matrix_multiply(matrix, inv_scale)
 
     def _material_index_for_mesh(self, mesh_index: int, material_count: int) -> int:
         material_index = self.material_index

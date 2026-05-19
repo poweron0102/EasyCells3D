@@ -40,11 +40,9 @@ class SceneLoader:
         objects_by_node_index: dict[int, Item] = {}
         objects_by_easycells_id: dict[str, Item] = {}
 
-        mesh_draw_indices: dict[int, int] = {}
-        next_draw_index = 0
+        mesh_draw_indices = _mesh_draw_indices(document)
 
         def create_node(node_index: int, parent: Item | None = None) -> Item:
-            nonlocal next_draw_index
             node = nodes[node_index]
             item = parent.CreateChild() if parent else self.game.CreateItem()
             item.name = node.get("name") or f"Node_{node_index}"
@@ -60,9 +58,6 @@ class SceneLoader:
 
             if "mesh" in node:
                 mesh_index = int(node["mesh"])
-                if mesh_index not in mesh_draw_indices:
-                    mesh_draw_indices[mesh_index] = next_draw_index
-                    next_draw_index += _primitive_count(document, mesh_index)
                 primitive_count = _primitive_count(document, mesh_index)
                 mesh_indices = list(range(mesh_draw_indices[mesh_index], mesh_draw_indices[mesh_index] + primitive_count))
                 item.AddComponent(StaticModel(
@@ -350,6 +345,15 @@ def _primitive_count(document: dict[str, Any], mesh_index: int) -> int:
         return 1
     primitives = meshes[mesh_index].get("primitives") or []
     return max(1, len(primitives))
+
+
+def _mesh_draw_indices(document: dict[str, Any]) -> dict[int, int]:
+    indices: dict[int, int] = {}
+    next_draw_index = 0
+    for mesh_index, _ in enumerate(document.get("meshes", [])):
+        indices[mesh_index] = next_draw_index
+        next_draw_index += _primitive_count(document, mesh_index)
+    return indices
 
 
 def _find_project_root(scene_path: Path) -> Path:

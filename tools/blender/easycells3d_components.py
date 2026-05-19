@@ -8,6 +8,7 @@ bl_info = {
 
 import importlib.util
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -157,6 +158,12 @@ class EC3D_AddonPreferences(bpy.types.AddonPreferences):
     python_command: bpy.props.StringProperty(
         name="Python Command",
         default="python",
+        description="Manual Python command/path. Leave as python to let the add-on use a project venv when found",
+    )
+    auto_detect_venv: bpy.props.BoolProperty(
+        name="Auto-detect Project Venv",
+        default=True,
+        description="Use .venv, venv, or env from the project root when Python Command is not manually overridden",
     )
     run_args: bpy.props.StringProperty(
         name="Run Arguments",
@@ -170,8 +177,10 @@ class EC3D_AddonPreferences(bpy.types.AddonPreferences):
         layout.prop(self, "project_root")
         layout.prop(self, "main_script")
         layout.prop(self, "export_path")
+        layout.prop(self, "auto_detect_venv")
         layout.prop(self, "python_command")
         layout.prop(self, "run_args")
+        layout.label(text=f"Runtime: {_runtime_python_label(self)}")
         layout.operator("ec3d.refresh_components", icon="FILE_REFRESH")
         layout.label(text=self.status_message)
 
@@ -259,7 +268,8 @@ class EC3D_OT_select_component(bpy.types.Operator):
 
 class EC3D_OT_sync_components(bpy.types.Operator):
     bl_idname = "ec3d.sync_components"
-    bl_label = "Sync Components"
+    bl_label = "Force Sync Components"
+    bl_description = "Diagnostic action: export already syncs components automatically"
 
     def execute(self, context):
         sync_scene_components(context.scene)
@@ -289,9 +299,10 @@ class EC3D_OT_export_scene(bpy.types.Operator):
 
         if self.run_after_export:
             try:
-                command = _run_command(prefs, project_root)
-                subprocess.Popen(command, cwd=str(project_root))
-                prefs.status_message = f"Exported and launched {prefs.main_script}"
+                command, runtime_source, main_script = _run_command(prefs, project_root)
+                launch_command = _launch_command(command)
+                subprocess.Popen(launch_command, cwd=str(project_root))
+                prefs.status_message = f"Exported and launched {main_script.name} using {runtime_source}"
             except Exception as exc:
                 prefs.status_message = f"Exported, but run failed: {exc}"
                 self.report({"ERROR"}, prefs.status_message)
@@ -323,13 +334,14 @@ class EC3D_PT_viewport(bpy.types.Panel):
         prefs = addon_prefs(context)
         layout.operator("ec3d.refresh_components", icon="FILE_REFRESH")
         layout.operator("ec3d.ensure_ids", icon="KEYINGSET")
-        layout.operator("ec3d.sync_components", icon="CHECKMARK")
+        layout.operator("ec3d.sync_components", text="Force Sync Components", icon="CHECKMARK")
         layout.operator("ec3d.export_scene", icon="EXPORT")
         op = layout.operator("ec3d.export_scene", text="Export & Run", icon="PLAY")
         op.run_after_export = True
         layout.separator()
         layout.label(text=f"Project: {prefs.project_root or '<not set>'}")
         layout.label(text=f"Export: {prefs.export_path or '<not set>'}")
+        layout.label(text=f"Runtime: {_runtime_python_label(prefs)}")
         layout.label(text=prefs.status_message)
 
 
@@ -429,12 +441,79 @@ def _operator_property_ids(operator):
 
 
 def _run_command(prefs, project_root):
-    python_command = _resolve_python_command(prefs.python_command, project_root)
+    python_command, runtime_source = _resolve_runtime_python(prefs, project_root)
     main_script = _resolve_path_text(prefs.main_script, project_root)
+    if not main_script.exists():
+        raise FileNotFoundError(f"Main script not found: {main_script}")
+    if not main_script.is_file():
+        raise FileNotFoundError(f"Main script is not a file: {main_script}")
     command = [str(python_command), str(main_script)]
     if prefs.run_args.strip():
         command.extend(shlex.split(prefs.run_args))
-    return command
+    return command, runtime_source, main_script
+
+
+def _launch_command(command):
+    if os.name != "nt":
+        return command
+    return ["cmd", "/k", _windows_command_line(command)]
+
+
+def _windows_command_line(command):
+    return subprocess.list2cmdline([str(part) for part in command])
+
+
+def _resolve_runtime_python(prefs, project_root):
+    raw = (prefs.python_command or "python").strip()
+    manual_override = _is_manual_python_command(raw)
+
+    if prefs.auto_detect_venv and not manual_override:
+        detected = _detect_project_venv(project_root)
+        if detected:
+            python_path, venv_name = detected
+            return python_path, f"{venv_name} (auto-detected)"
+
+    python_command = _resolve_python_command(raw, project_root)
+    if manual_override or not prefs.auto_detect_venv:
+        return python_command, "manual override"
+    return python_command, "system python"
+
+
+def _runtime_python_label(prefs):
+    project_root = Path(bpy.path.abspath(prefs.project_root)).resolve() if prefs.project_root else Path.cwd()
+    try:
+        python_command, runtime_source = _resolve_runtime_python(prefs, project_root)
+        return f"{python_command} ({runtime_source})"
+    except Exception as exc:
+        return f"unresolved: {exc}"
+
+
+def _is_manual_python_command(value):
+    raw = (value or "").strip().strip('"')
+    return bool(raw) and raw not in {"python", "py", "python.exe", "py.exe"}
+
+
+def _detect_project_venv(project_root):
+    for name in (".venv", "venv", "env"):
+        venv_path = project_root / name
+        python_path = _venv_python_path(venv_path)
+        if python_path:
+            return python_path, name
+    return None
+
+
+def _venv_python_path(venv_path):
+    if not venv_path.is_dir():
+        return None
+    candidates = [
+        venv_path / "Scripts" / "python.exe",
+        venv_path / "bin" / "python",
+        venv_path / "python.exe",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def _resolve_python_command(value, project_root):
@@ -444,14 +523,9 @@ def _resolve_python_command(value, project_root):
         path = project_root / path
 
     if path.is_dir():
-        candidates = [
-            path / "Scripts" / "python.exe",
-            path / "python.exe",
-            path / "bin" / "python",
-        ]
-        for candidate in candidates:
-            if candidate.exists():
-                return candidate
+        python_path = _venv_python_path(path)
+        if python_path:
+            return python_path
 
     if path.name.lower() in {"activate", "activate.bat", "activate.ps1"}:
         candidate = path.parent / "python.exe"

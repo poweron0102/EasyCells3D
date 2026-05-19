@@ -36,8 +36,17 @@ No Blender:
    - `Project Root`: raiz do projeto EasyCells3D;
    - `Main Script`: por exemplo `main.py`;
    - `Default Export Path`: por exemplo `Assets/Blender/FoodPack.glb`;
-   - `Python Command`: comando usado para rodar o projeto;
+   - `Auto-detect Project Venv`: usa automaticamente `.venv`, `venv` ou `env` na raiz do projeto quando disponivel;
+   - `Python Command`: comando usado para rodar o projeto quando voce quiser sobrescrever a deteccao automatica;
    - `Run Arguments`: argumentos extras opcionais.
+
+Quando a auto-deteccao estiver ligada e `Python Command` continuar como `python`, o add-on prioriza:
+
+1. `.venv`
+2. `venv`
+3. `env`
+
+No Windows ele procura `Scripts/python.exe`; em Linux/macOS ele procura `bin/python`. O painel mostra o runtime efetivo, por exemplo `Runtime: .venv/Scripts/python.exe (.venv auto-detected)`. Para forcar outro interpretador, desative `Auto-detect Project Venv` ou preencha `Python Command` com outro caminho/comando.
 
 ## Descobrindo Componentes
 
@@ -140,7 +149,7 @@ Controles:
 
 - `Refresh Components`
 - `Ensure Stable IDs`
-- `Sync Components`
+- `Force Sync Components`
 - `Export`
 - `Export & Run`
 
@@ -201,11 +210,17 @@ O botao `Export` faz:
 
 O botao `Export & Run` faz tudo acima e executa o script principal configurado, usando a raiz do projeto como working directory.
 
+No Windows, `Export & Run` abre o jogo em um console persistente. Se o jogo falhar por dependencia faltando, Python errado ou traceback em `main.py`, o console permanece aberto para mostrar o erro em vez de fechar imediatamente.
+
+`Force Sync Components` existe como acao manual de diagnostico. Normalmente voce nao precisa clicar nele antes de exportar, porque `Export` e `Export & Run` ja sincronizam automaticamente os componentes antes de gerar o GLB.
+
 ## Checklist
 
 - O componente nao aparece no Blender: confira `Project Root` e clique em `Refresh Components`.
 - O componente aparece, mas nao e criado no jogo: confira se a classe herda de `Component` e esta em um dos pacotes escaneados.
-- O valor nao foi exportado: use `Export` ou `Export & Run`, que chamam `Sync Components` antes da exportacao.
+- O valor nao foi exportado: use `Export` ou `Export & Run`, que sincronizam os componentes automaticamente antes da exportacao.
+- O jogo abre e fecha rapido: use `Export & Run`; no Windows ele mantem o console aberto para mostrar o traceback.
+- O jogo usa o Python errado: confira o texto `Runtime` no painel, desative `Auto-detect Project Venv` ou ajuste `Python Command`.
 - Referencia quebrou apos renomear objeto: reexporte pelo add-on para garantir que o `easycells_id` esteja salvo.
 - Dependencias do jogo faltam no Blender: o refresh usa AST e nao deve importa-las; se falhar, confira se `EasyCells3D/ComponentDiscovery.py` existe na raiz configurada.
 
