@@ -1,0 +1,48 @@
+{
+  "format": "easycells3d.blockbench.scene",
+  "version": 1,
+  "model_name": "testes",
+  "unit_scale": 16,
+  "visual": {
+    "model": "Assets/Blockbench/scene.glb",
+    "kind": "glb",
+    "match_by": [
+      "easycells_id",
+      "blockbench_uuid",
+      "name"
+    ]
+  },
+  "nodes": [
+    {
+      "id": "779a21ef-1ffc-7c3a-b07e-eec9d942db82",
+      "blockbench_uuid": "03eb3381-b015-a6ec-246c-7343e164d2f0",
+      "name": "group",
+      "parent": null,
+      "components": [
+        {
+          "type": "RotatingObj",
+          "args": {},
+          "fields": {
+            "speed": 45
+          }
+        }
+      ],
+      "kind": "group",
+      "translation": [
+        0,
+        0.875,
+        0
+      ],
+      "rotation_euler_degrees": [
+        0,
+        0,
+        0
+      ],
+      "scale": [
+        1,
+        1,
+        1
+      ]
+    }
+  ]
+}
