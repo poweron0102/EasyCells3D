@@ -214,7 +214,8 @@ O botao `Export` faz:
 1. garante `easycells_id` nos objetos;
 2. sincroniza a lista `components` com os valores editados na UI;
 3. chama `bpy.ops.export_scene.gltf`;
-4. habilita `export_custom_properties=True`.
+4. habilita Custom Properties/extras;
+5. habilita exportacao de cameras e luzes quando o exportador glTF do Blender expuser `export_cameras` e `export_lights`.
 
 O botao `Export & Run` faz tudo acima e executa o script principal configurado, usando a raiz do projeto como working directory.
 
@@ -249,3 +250,5 @@ Ao exportar pelo glTF do Blender, cameras e luzes entram como recursos nativos d
 Se o mesmo objeto tiver um componente `Camera3D` ou `Light3D` declarado manualmente nas Custom Properties, o loader respeita a declaracao manual e nao cria o componente nativo duplicado.
 
 Objetos `Empty` continuam virando apenas `Item`s com transform. Armatures, skins, constraints, fisica, audio, particles, light probes e world settings ainda nao sao convertidos automaticamente; para esses casos, use componentes EasyCells3D nas Custom Properties ou exporte a geometria ja convertida para mesh.
+
+Se uma camera ou luz existente no Blender nao aparecer no jogo, confira o GLB reexportado: ele precisa conter `cameras` para cameras e `KHR_lights_punctual` para luzes. Recarregue/reinstale o add-on apos atualizar `tools/blender/easycells3d_components.py`, porque o Blender pode manter a versao antiga carregada em memoria.

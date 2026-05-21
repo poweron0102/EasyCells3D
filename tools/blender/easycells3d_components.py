@@ -426,6 +426,10 @@ def _gltf_export_kwargs(export_path):
     properties = _operator_property_ids(bpy.ops.export_scene.gltf)
     if export_path.suffix.lower() == ".glb" and "export_format" in properties:
         kwargs["export_format"] = "GLB"
+    if "export_cameras" in properties:
+        kwargs["export_cameras"] = True
+    if "export_lights" in properties:
+        kwargs["export_lights"] = True
     if "export_extras" in properties:
         kwargs["export_extras"] = True
     elif "export_custom_properties" in properties:

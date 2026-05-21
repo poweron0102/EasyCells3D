@@ -5,11 +5,11 @@ from EasyCells3D.Geometry import Vec3
 
 
 def init(game: Game):
-    camera = game.CreateItem()
-    camera.name = "Camera"
-    camera.transform.position = Vec3(0, 2, 6)
-    camera.AddComponent(Camera3D())
-    camera.AddComponent(FreeCam())
+    # camera = game.CreateItem()
+    # camera.name = "Camera"
+    # camera.transform.position = Vec3(0, 2, 6)
+    # camera.AddComponent(Camera3D())
+    # camera.AddComponent(FreeCam())
 
     SceneLoader(game).load("Assets/Blender/scene.glb")
 
