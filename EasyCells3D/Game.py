@@ -86,6 +86,7 @@ class Game:
         self.scheduler = Scheduler(self)
         self.current_level = "Name"
         self.cameras: list[Camera] = []
+        self.lights: list = []
         self.item_list: list[Item] = []
         self.to_init: list[Callable] = []
         self.new_game(start_level, supress=True)

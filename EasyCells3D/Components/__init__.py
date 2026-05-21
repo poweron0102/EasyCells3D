@@ -6,12 +6,14 @@ from .AnimatedModel import AnimatedModel
 from .Animator3D import Animator3D, AnimationClip, AnimationEvent
 from .Sprite import Sprite
 from .StaticModel import StaticModel
+from .Light3D import Light3D
 from .TileMap import TileMap, TileMapRenderer
 
 __all__ = [
     'Component', 'Item', 'Transform',
     'Camera2D',
     'Camera3D',
+    'Light3D',
     'Animation2D', 'Animator2D',
     'AnimationClip', 'AnimationEvent',
     'AnimatedModel', 'Animator3D',
@@ -19,4 +21,3 @@ __all__ = [
     'StaticModel',
     'TileMap', 'TileMapRenderer',
 ]
-

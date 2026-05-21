@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pyray as rl
 
 from EasyCells3D.ComponentRegistry import ComponentCreationContext, ComponentRegistry
-from EasyCells3D.Components import Item, StaticModel, Transform
+from EasyCells3D.Components import Camera3D, Item, Light3D, StaticModel, Transform
 from EasyCells3D.Geometry import Quaternion, Vec3
 from EasyCells3D.Serialization import get_serialized_fields
 
@@ -67,6 +68,8 @@ class SceneLoader:
                     shared=True,
                     baked_transform=item.global_transform_get().clone(),
                 ))
+
+            _add_native_gltf_components(item, node, document)
 
             for child_index in node.get("children", []):
                 create_node(child_index, item)
@@ -260,6 +263,72 @@ def _extract_component_defs(node: dict) -> list[dict]:
         warnings.warn(f"SceneLoader: components deve ser lista em '{node.get('name', '<sem nome>')}'")
         return []
     return [entry for entry in raw_components if isinstance(entry, dict)]
+
+
+def _add_native_gltf_components(item: Item, node: dict, document: dict[str, Any]) -> None:
+    if "camera" in node and not _node_has_component_type(node, {"Camera3D", "EasyCells3D.Components.Camera3D.Camera3D"}):
+        component = _camera_component_from_gltf(node["camera"], document)
+        if component:
+            item.AddComponent(component)
+
+    if not _node_has_component_type(node, {"Light3D", "EasyCells3D.Components.Light3D.Light3D"}):
+        component = _light_component_from_gltf(node, document)
+        if component:
+            item.AddComponent(component)
+
+
+def _camera_component_from_gltf(camera_index: Any, document: dict[str, Any]) -> Camera3D | None:
+    cameras = document.get("cameras") or []
+    try:
+        camera = cameras[int(camera_index)]
+    except (IndexError, TypeError, ValueError):
+        warnings.warn(f"SceneLoader: camera glTF invalida: {camera_index}")
+        return None
+
+    camera_type = camera.get("type", "perspective")
+    if camera_type == "orthographic":
+        orthographic = camera.get("orthographic") or {}
+        ymag = float(orthographic.get("ymag", orthographic.get("xmag", 5.0)))
+        return Camera3D(
+            vfov=ymag * 2.0,
+            projection=rl.CameraProjection.CAMERA_ORTHOGRAPHIC,
+        )
+
+    perspective = camera.get("perspective") or {}
+    yfov = float(perspective.get("yfov", math.radians(60.0)))
+    return Camera3D(vfov=math.degrees(yfov))
+
+
+def _light_component_from_gltf(node: dict, document: dict[str, Any]) -> Light3D | None:
+    extension = (node.get("extensions") or {}).get("KHR_lights_punctual")
+    if not isinstance(extension, dict) or "light" not in extension:
+        return None
+
+    lights = ((document.get("extensions") or {}).get("KHR_lights_punctual") or {}).get("lights") or []
+    try:
+        light = lights[int(extension["light"])]
+    except (IndexError, TypeError, ValueError):
+        warnings.warn(f"SceneLoader: luz glTF invalida: {extension.get('light')}")
+        return None
+
+    spot = light.get("spot") or {}
+    return Light3D(
+        light_type=light.get("type", "point"),
+        color=light.get("color", [1.0, 1.0, 1.0]),
+        intensity=light.get("intensity", 1.0),
+        range=light.get("range"),
+        inner_cone_angle=spot.get("innerConeAngle", 0.0),
+        outer_cone_angle=spot.get("outerConeAngle", math.pi / 4.0),
+        name=light.get("name"),
+    )
+
+
+def _node_has_component_type(node: dict, type_names: set[str]) -> bool:
+    for component_def in _extract_component_defs(node):
+        type_name = component_def.get("type")
+        if type_name in type_names:
+            return True
+    return False
 
 
 def _scene_has_configured_components(nodes: list[dict]) -> bool:

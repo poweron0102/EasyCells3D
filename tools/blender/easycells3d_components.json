@@ -165,6 +165,57 @@
       "fields": {}
     },
     {
+      "name": "Light3D",
+      "class_path": "EasyCells3D.Components.Light3D.Light3D",
+      "module": "EasyCells3D.Components.Light3D",
+      "required_args": [],
+      "optional_args": [
+        {
+          "name": "light_type",
+          "type": "str",
+          "default": "point",
+          "required": false
+        },
+        {
+          "name": "color",
+          "type": "Vec3 | tuple[float, float, float] | list[float] | None",
+          "default": null,
+          "required": false
+        },
+        {
+          "name": "intensity",
+          "type": "float",
+          "default": 1.0,
+          "required": false
+        },
+        {
+          "name": "range",
+          "type": "float | None",
+          "default": null,
+          "required": false
+        },
+        {
+          "name": "inner_cone_angle",
+          "type": "float",
+          "default": 0.0,
+          "required": false
+        },
+        {
+          "name": "outer_cone_angle",
+          "type": "float",
+          "default": 0.7853981633974483,
+          "required": false
+        },
+        {
+          "name": "name",
+          "type": "str | None",
+          "default": null,
+          "required": false
+        }
+      ],
+      "fields": {}
+    },
+    {
       "name": "TileMap",
       "class_path": "EasyCells3D.Components.TileMap.TileMap",
       "module": "EasyCells3D.Components.TileMap",

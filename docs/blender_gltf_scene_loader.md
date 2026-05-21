@@ -2,6 +2,14 @@
 
 `SceneLoader` carrega arquivos `.glb` ou `.gltf` exportados do Blender, cria um `Item` para cada node da cena, preserva hierarquia/transforms e adiciona componentes declarados nas Custom Properties.
 
+O loader tambem interpreta alguns componentes nativos do glTF exportados pelo Blender:
+
+- nodes com `mesh` recebem `StaticModel`;
+- nodes com `camera` recebem `Camera3D`;
+- nodes com `KHR_lights_punctual` recebem `Light3D`.
+
+`Light3D` preserva tipo, cor, intensidade, alcance e cones de spot light, mas ainda nao ilumina os modelos renderizados. Ele existe como ponte de dados para um pipeline futuro de shader/iluminacao dinamica.
+
 Fluxo basico no level:
 
 ```python
@@ -229,3 +237,15 @@ No Windows, `Export & Run` abre o jogo em um console persistente. Se o jogo falh
 O loader cria os `Items` e adiciona `StaticModel` nos nodes com mesh. Para cenas GLTF/GLB, o `StaticModel` usa cache compartilhado por arquivo e desenha as meshes/primitives correspondentes ao node carregado. O codigo aceita os nomes de campos usados por diferentes versoes do binding `pyray`, como `mesh_count`/`meshCount`, `material_count`/`materialCount` e `mesh_material`/`meshMaterial`.
 
 Se uma versao futura do binding nao expuser acesso direto a `model.meshes`/`model.materials`, o `StaticModel` ainda pode cair para `draw_model_ex` como fallback de compatibilidade.
+
+## Componentes Nativos do Blender
+
+Ao exportar pelo glTF do Blender, cameras e luzes entram como recursos nativos do arquivo, nao como Custom Properties da EasyCells3D. O `SceneLoader` le esses campos diretamente:
+
+- Camera perspective: usa `cameras[index].perspective.yfov` e converte de radianos para graus em `Camera3D.vfov`.
+- Camera orthographic: cria `Camera3D` com `CAMERA_ORTHOGRAPHIC` e usa `ymag * 2` como tamanho inicial. O Raylib nao expoe todos os mesmos parametros de camera do glTF, entao `znear`, `zfar`, `xmag` e aspect ratio ainda nao sao reproduzidos com fidelidade completa.
+- Luz point, spot e directional/sun: usa a extensao `KHR_lights_punctual` e cria `Light3D`.
+
+Se o mesmo objeto tiver um componente `Camera3D` ou `Light3D` declarado manualmente nas Custom Properties, o loader respeita a declaracao manual e nao cria o componente nativo duplicado.
+
+Objetos `Empty` continuam virando apenas `Item`s com transform. Armatures, skins, constraints, fisica, audio, particles, light probes e world settings ainda nao sao convertidos automaticamente; para esses casos, use componentes EasyCells3D nas Custom Properties ou exporte a geometria ja convertida para mesh.
