@@ -7,6 +7,7 @@ O loader tambem interpreta alguns componentes nativos do glTF exportados pelo Bl
 - nodes com `mesh` recebem `StaticModel`;
 - nodes com `camera` recebem `Camera3D`;
 - nodes com `KHR_lights_punctual` recebem `Light3D`.
+- nodes com `easycells_animated_model` recebem `AnimatedModel` e `Animator3D`.
 
 `Light3D` preserva tipo, cor, intensidade, alcance e cones de spot light, mas ainda nao ilumina os modelos renderizados. Ele existe como ponte de dados para um pipeline futuro de shader/iluminacao dinamica.
 
@@ -215,7 +216,8 @@ O botao `Export` faz:
 2. sincroniza a lista `components` com os valores editados na UI;
 3. chama `bpy.ops.export_scene.gltf`;
 4. habilita Custom Properties/extras;
-5. habilita exportacao de cameras e luzes quando o exportador glTF do Blender expuser `export_cameras` e `export_lights`.
+5. habilita exportacao de cameras, luzes e animacoes quando o exportador glTF do Blender expuser essas opcoes;
+6. exporta armatures animadas como GLBs separados e grava no objeto raiz a metadata `easycells_animated_model`.
 
 O botao `Export & Run` faz tudo acima e executa o script principal configurado, usando a raiz do projeto como working directory.
 
@@ -246,9 +248,44 @@ Ao exportar pelo glTF do Blender, cameras e luzes entram como recursos nativos d
 - Camera perspective: usa `cameras[index].perspective.yfov` e converte de radianos para graus em `Camera3D.vfov`.
 - Camera orthographic: cria `Camera3D` com `CAMERA_ORTHOGRAPHIC` e usa `ymag * 2` como tamanho inicial. O Raylib nao expoe todos os mesmos parametros de camera do glTF, entao `znear`, `zfar`, `xmag` e aspect ratio ainda nao sao reproduzidos com fidelidade completa.
 - Luz point, spot e directional/sun: usa a extensao `KHR_lights_punctual` e cria `Light3D`.
+- Personagem/armature animado: usa `easycells_animated_model` e cria `AnimatedModel` + `Animator3D`.
 
 Se o mesmo objeto tiver um componente `Camera3D` ou `Light3D` declarado manualmente nas Custom Properties, o loader respeita a declaracao manual e nao cria o componente nativo duplicado.
 
 Objetos `Empty` continuam virando apenas `Item`s com transform. Armatures, skins, constraints, fisica, audio, particles, light probes e world settings ainda nao sao convertidos automaticamente; para esses casos, use componentes EasyCells3D nas Custom Properties ou exporte a geometria ja convertida para mesh.
 
 Se uma camera ou luz existente no Blender nao aparecer no jogo, confira o GLB reexportado: ele precisa conter `cameras` para cameras e `KHR_lights_punctual` para luzes. Recarregue/reinstale o add-on apos atualizar `tools/blender/easycells3d_components.py`, porque o Blender pode manter a versao antiga carregada em memoria.
+
+## Animacoes 3D
+
+O fluxo de animacao segue o modelo Unity-like:
+
+- a cena principal continua sendo layout/cenario;
+- cada armature com meshes filhos vira um asset GLB separado, mesmo antes de ter Actions configuradas;
+- o objeto raiz da armature na cena recebe `AnimatedModel` e `Animator3D`;
+- os nomes das Actions/NLA strips do Blender entram como `clip_names`, permitindo chamar `animator.play("Walk")`, `animator.play("Run")`, etc.
+
+Se a armature ainda nao tiver Actions/NLA strips, o asset separado ainda sera criado para manter o posicionamento correto de personagem rigado/skinned; nesse caso o `Animator3D` existira, mas nao tera clips para tocar ate que animacoes sejam adicionadas no Blender e reexportadas.
+
+O add-on exporta esses assets em uma pasta ao lado do GLB principal, por exemplo:
+
+```text
+Assets/Blender/scene.glb
+Assets/Blender/scene_animated/PlayerRig.glb
+```
+
+No GLB principal, a metadata fica no objeto raiz animado:
+
+```json
+{
+  "easycells_animated_model": {
+    "path": "Assets/Blender/scene_animated/PlayerRig.glb",
+    "clip_names": ["Walk", "Run", "Jump"],
+    "autoplay": true
+  }
+}
+```
+
+Quando essa metadata existe, o `SceneLoader` nao cria `StaticModel` para os meshes filhos do personagem, evitando render duplicado. Componentes customizados no root continuam funcionando normalmente.
+
+Componentes presos a ossos especificos, como arma na mao ou hitbox no pe, ainda precisam de uma etapa futura (`BoneSocket`/`BoneAttachment`). Por enquanto, coloque gameplay scripts e colisores principais no root do personagem.

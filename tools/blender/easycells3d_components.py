@@ -20,6 +20,7 @@ import bpy
 
 COMPONENTS_PROP = "components"
 EASYCELLS_ID_PROP = "easycells_id"
+ANIMATED_MODEL_PROP = "easycells_animated_model"
 
 
 def addon_prefs(context=None):
@@ -292,10 +293,14 @@ class EC3D_OT_export_scene(bpy.types.Operator):
         export_path.parent.mkdir(parents=True, exist_ok=True)
 
         sync_scene_components(context.scene)
+        animated_count = export_animated_models(context.scene, export_path, project_root)
         cleanup_editor_properties(context.scene)
         kwargs = _gltf_export_kwargs(export_path)
         bpy.ops.export_scene.gltf(**kwargs)
-        prefs.status_message = f"Exported {export_path}"
+        if animated_count:
+            prefs.status_message = f"Exported {export_path} and {animated_count} animated model(s)"
+        else:
+            prefs.status_message = f"Exported {export_path}"
 
         if self.run_after_export:
             try:
@@ -419,17 +424,28 @@ def _component_prop_key(index, section, name):
     return f"ec3d_{index}_{section}_{name}"
 
 
-def _gltf_export_kwargs(export_path):
+def _gltf_export_kwargs(export_path, selected=False):
     kwargs = {
         "filepath": str(export_path),
     }
     properties = _operator_property_ids(bpy.ops.export_scene.gltf)
     if export_path.suffix.lower() == ".glb" and "export_format" in properties:
         kwargs["export_format"] = "GLB"
+    if selected:
+        if "use_selection" in properties:
+            kwargs["use_selection"] = True
+        if "export_selected" in properties:
+            kwargs["export_selected"] = True
     if "export_cameras" in properties:
         kwargs["export_cameras"] = True
     if "export_lights" in properties:
         kwargs["export_lights"] = True
+    for animation_flag in ("export_animations", "export_animation"):
+        if animation_flag in properties:
+            kwargs[animation_flag] = True
+    for animation_option in ("export_nla_strips", "export_force_sampling"):
+        if animation_option in properties:
+            kwargs[animation_option] = True
     if "export_extras" in properties:
         kwargs["export_extras"] = True
     elif "export_custom_properties" in properties:
@@ -442,6 +458,171 @@ def _operator_property_ids(operator):
         return {prop.identifier for prop in operator.get_rna_type().properties}
     except Exception:
         return set()
+
+
+def export_animated_models(scene, export_path, project_root):
+    animated_roots = _animated_roots(scene)
+    for root in animated_roots:
+        asset_path = _animated_asset_path(root, export_path)
+        asset_path.parent.mkdir(parents=True, exist_ok=True)
+        root[ANIMATED_MODEL_PROP] = json.dumps({
+            "path": _path_for_metadata(asset_path, project_root),
+            "clip_names": _animation_clip_names(root),
+            "autoplay": True,
+        })
+        _export_selected_objects(_animated_export_objects(root), asset_path, root)
+    return len(animated_roots)
+
+
+def _animated_roots(scene):
+    roots = []
+    for obj in scene.objects:
+        if not _is_animated_root(obj):
+            continue
+        if any(_is_descendant_of(obj, root) for root in roots):
+            continue
+        roots = [root for root in roots if not _is_descendant_of(root, obj)]
+        roots.append(obj)
+    return roots
+
+
+def _is_animated_root(obj):
+    if getattr(obj, "type", None) != "ARMATURE":
+        return False
+    return bool(_animation_clip_names(obj) or _has_animated_descendant(obj) or _has_mesh_descendant(obj))
+
+
+def _has_animated_descendant(obj):
+    return any(_has_animation_data(child) for child in _walk_children(obj))
+
+
+def _has_mesh_descendant(obj):
+    return any(getattr(child, "type", None) == "MESH" for child in _walk_children(obj))
+
+
+def _has_animation_data(obj):
+    animation_data = getattr(obj, "animation_data", None)
+    if not animation_data:
+        return False
+    if getattr(animation_data, "action", None):
+        return True
+    for track in getattr(animation_data, "nla_tracks", []) or []:
+        if getattr(track, "strips", None):
+            return True
+    return False
+
+
+def _animation_clip_names(root):
+    names = []
+
+    def add_name(name):
+        if name and name not in names:
+            names.append(str(name))
+
+    for obj in [root] + list(_walk_children(root)):
+        animation_data = getattr(obj, "animation_data", None)
+        if not animation_data:
+            continue
+        action = getattr(animation_data, "action", None)
+        if action:
+            add_name(getattr(action, "name", None))
+        for track in getattr(animation_data, "nla_tracks", []) or []:
+            for strip in getattr(track, "strips", []) or []:
+                action = getattr(strip, "action", None)
+                add_name(getattr(action, "name", None))
+
+    for action in getattr(bpy.data, "actions", []) or []:
+        add_name(getattr(action, "name", None))
+    return names
+
+
+def _animated_export_objects(root):
+    return [root] + list(_walk_children(root))
+
+
+def _walk_children(obj):
+    for child in getattr(obj, "children", []) or []:
+        yield child
+        yield from _walk_children(child)
+
+
+def _is_descendant_of(obj, ancestor):
+    current = getattr(obj, "parent", None)
+    while current:
+        if current == ancestor:
+            return True
+        current = getattr(current, "parent", None)
+    return False
+
+
+def _animated_asset_path(root, export_path):
+    safe_name = _safe_filename(getattr(root, "name", "AnimatedModel"))
+    return export_path.with_name(f"{export_path.stem}_animated").with_suffix("") / f"{safe_name}.glb"
+
+
+def _safe_filename(value):
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in str(value))
+    return safe.strip("_") or "AnimatedModel"
+
+
+def _path_for_metadata(path, project_root):
+    try:
+        return str(path.resolve().relative_to(project_root.resolve()).as_posix())
+    except Exception:
+        return str(path)
+
+
+def _export_selected_objects(objects, export_path, active_object):
+    previous_selection = list(getattr(bpy.context, "selected_objects", []) or [])
+    previous_active = getattr(getattr(bpy.context, "view_layer", None), "objects", None)
+    previous_active_object = getattr(previous_active, "active", None) if previous_active else None
+    previous_matrix = _copy_matrix(getattr(active_object, "matrix_world", None))
+
+    try:
+        for obj in getattr(bpy.context.scene, "objects", []) or []:
+            if hasattr(obj, "select_set"):
+                obj.select_set(False)
+        for obj in objects:
+            if hasattr(obj, "select_set"):
+                obj.select_set(True)
+        if previous_active:
+            previous_active.active = active_object
+        _set_identity_matrix(active_object)
+        bpy.ops.export_scene.gltf(**_gltf_export_kwargs(export_path, selected=True))
+    finally:
+        if previous_matrix is not None:
+            active_object.matrix_world = previous_matrix
+            _update_view_layer()
+        for obj in getattr(bpy.context.scene, "objects", []) or []:
+            if hasattr(obj, "select_set"):
+                obj.select_set(False)
+        for obj in previous_selection:
+            if hasattr(obj, "select_set"):
+                obj.select_set(True)
+        if previous_active:
+            previous_active.active = previous_active_object
+
+
+def _copy_matrix(matrix):
+    if matrix is None:
+        return None
+    return matrix.copy() if hasattr(matrix, "copy") else matrix
+
+
+def _set_identity_matrix(obj):
+    try:
+        from mathutils import Matrix
+        obj.matrix_world = Matrix.Identity(4)
+        _update_view_layer()
+    except Exception:
+        pass
+
+
+def _update_view_layer():
+    view_layer = getattr(bpy.context, "view_layer", None)
+    update = getattr(view_layer, "update", None)
+    if update:
+        update()
 
 
 def _run_command(prefs, project_root):

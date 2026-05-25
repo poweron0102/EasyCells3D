@@ -10,7 +10,7 @@ import numpy as np
 import pyray as rl
 
 from EasyCells3D.ComponentRegistry import ComponentCreationContext, ComponentRegistry
-from EasyCells3D.Components import Camera3D, Item, Light3D, StaticModel, Transform
+from EasyCells3D.Components import AnimatedModel, Animator3D, Camera3D, Item, Light3D, StaticModel, Transform
 from EasyCells3D.Geometry import Quaternion, Vec3
 from EasyCells3D.Serialization import get_serialized_fields
 
@@ -43,11 +43,12 @@ class SceneLoader:
 
         mesh_draw_indices = _mesh_draw_indices(document)
 
-        def create_node(node_index: int, parent: Item | None = None) -> Item:
+        def create_node(node_index: int, parent: Item | None = None, suppress_static_model: bool = False) -> Item:
             node = nodes[node_index]
             item = parent.CreateChild() if parent else self.game.CreateItem()
             item.name = node.get("name") or f"Node_{node_index}"
             item.transform = _node_transform(node)
+            animated_model_def = _extract_animated_model_def(node)
 
             unique_name = _unique_name(item.name, objects_by_name)
             objects_by_name[unique_name] = item
@@ -57,7 +58,15 @@ class SceneLoader:
                 item.easycells_id = easycells_id
                 objects_by_easycells_id[easycells_id] = item
 
-            if "mesh" in node:
+            if animated_model_def:
+                item.AddComponent(_animated_model_component_from_gltf(animated_model_def, scene_path))
+                if not _node_has_component_type(node, {"Animator3D", "EasyCells3D.Components.Animator3D.Animator3D"}):
+                    item.AddComponent(Animator3D(
+                        current_animation=animated_model_def.get("current_animation"),
+                        autoplay=bool(animated_model_def.get("autoplay", True)),
+                    ))
+
+            if "mesh" in node and not suppress_static_model and not animated_model_def:
                 mesh_index = int(node["mesh"])
                 primitive_count = _primitive_count(document, mesh_index)
                 mesh_indices = list(range(mesh_draw_indices[mesh_index], mesh_draw_indices[mesh_index] + primitive_count))
@@ -72,12 +81,12 @@ class SceneLoader:
             _add_native_gltf_components(item, node, document)
 
             for child_index in node.get("children", []):
-                create_node(child_index, item)
+                create_node(child_index, item, suppress_static_model or bool(animated_model_def))
 
             return item
 
         root_items = [create_node(node_index) for node_index in root_node_indices]
-        if root_items and mesh_draw_indices and not _scene_has_configured_components(nodes):
+        if root_items and mesh_draw_indices and not _scene_has_configured_components(nodes) and not _scene_has_animated_models(nodes):
             root_items[0].AddComponent(StaticModel(
                 str(scene_path),
                 base_path=".",
@@ -265,6 +274,48 @@ def _extract_component_defs(node: dict) -> list[dict]:
     return [entry for entry in raw_components if isinstance(entry, dict)]
 
 
+def _extract_animated_model_def(node: dict) -> dict | None:
+    extras = _node_extras(node)
+    if not extras:
+        return None
+    value = extras.get("easycells_animated_model") or extras.get("animated_model")
+    if value is None and isinstance(extras.get("EasyCells3D"), dict):
+        value = extras["EasyCells3D"].get("animated_model")
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {"path": value}
+    if isinstance(value, dict) and value.get("path"):
+        return value
+    return None
+
+
+def _animated_model_component_from_gltf(animated_model_def: dict, scene_path: Path) -> AnimatedModel:
+    return AnimatedModel(
+        _resolve_animated_model_path(str(animated_model_def["path"]), scene_path),
+        clip_names=_string_list(animated_model_def.get("clip_names")),
+        clip_fps=float(animated_model_def.get("clip_fps", 24.0)),
+        base_path=".",
+    )
+
+
+def _resolve_animated_model_path(path: str, scene_path: Path) -> str:
+    model_path = Path(path)
+    if model_path.is_absolute() or model_path.exists():
+        return str(model_path)
+    scene_relative = scene_path.parent / model_path
+    if scene_relative.exists():
+        return str(scene_relative)
+    return path
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(entry) for entry in value if entry is not None]
+
+
 def _add_native_gltf_components(item: Item, node: dict, document: dict[str, Any]) -> None:
     if "camera" in node and not _node_has_component_type(node, {"Camera3D", "EasyCells3D.Components.Camera3D.Camera3D"}):
         component = _camera_component_from_gltf(node["camera"], document)
@@ -335,17 +386,28 @@ def _scene_has_configured_components(nodes: list[dict]) -> bool:
     return any(_extract_component_defs(node) for node in nodes)
 
 
+def _scene_has_animated_models(nodes: list[dict]) -> bool:
+    return any(_extract_animated_model_def(node) for node in nodes)
+
+
 def _extract_easycells_id(node: dict) -> str | None:
-    extras = node.get("extras") or {}
-    if isinstance(extras, str):
-        try:
-            extras = json.loads(extras)
-        except json.JSONDecodeError:
-            return None
+    extras = _node_extras(node)
     if not isinstance(extras, dict):
         return None
     value = extras.get("easycells_id")
     return str(value) if value else None
+
+
+def _node_extras(node: dict) -> dict:
+    extras = node.get("extras") or {}
+    if isinstance(extras, str):
+        try:
+            return json.loads(extras)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(extras, dict):
+        return {}
+    return extras
 
 
 def _resolve_serialized_value(value: Any, field, context: ComponentCreationContext) -> Any:

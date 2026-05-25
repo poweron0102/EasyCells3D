@@ -28,8 +28,19 @@ class AnimatedModel(Renderable3D):
         super().init()
         resolved_path = resolve_asset_path(self.model_path, self.base_path)
         self.model = rl.load_model(resolved_path)
-        self.animations = list(rl.load_model_animations(resolved_path) or [])
+        self.animations = self._load_animations(resolved_path)
         self._build_clips()
+
+    def _load_animations(self, resolved_path: str) -> list:
+        try:
+            return list(rl.load_model_animations(resolved_path) or [])
+        except RuntimeError as exc:
+            if "requires 2 arguments" not in str(exc):
+                raise
+
+        count = rl.ffi.new("int *", 0)
+        animations = rl.load_model_animations(resolved_path, count)
+        return [animations[index] for index in range(int(count[0]))] if animations else []
 
     def _build_clips(self):
         self.clips.clear()
