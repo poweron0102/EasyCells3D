@@ -13,8 +13,6 @@ class ComponentCreationContext:
     item: Item
     node: dict
     scene_path: str
-    objects_by_name: dict[str, Item]
-    objects_by_node_index: dict[int, Item]
     objects_by_easycells_id: dict[str, Item] | None = None
     assets: dict[str, Any] | None = None
     components_by_id: dict[str, Component] | None = None

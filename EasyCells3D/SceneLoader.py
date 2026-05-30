@@ -26,11 +26,8 @@ class _PendingSerializedFields:
 class _SceneContext:
     scene_path: Path
     assets: dict[str, Any]
-    objects_by_name: dict[str, Item]
-    objects_by_node_index: dict[int, Item]
     objects_by_easycells_id: dict[str, Item]
     components_by_id: dict[str, Any]
-    components_by_item_id: dict[str, list[Any]]
 
 
 class SceneLoader:
@@ -50,11 +47,8 @@ class SceneLoader:
         context = _SceneContext(
             scene_path=scene_path,
             assets=self._create_global_assets(document.get("assets") or {}),
-            objects_by_name={},
-            objects_by_node_index={},
             objects_by_easycells_id={},
             components_by_id={},
-            components_by_item_id={},
         )
 
         items_by_id = self._create_items(item_defs, context)
@@ -88,7 +82,7 @@ class SceneLoader:
 
     def _create_items(self, item_defs: list[dict[str, Any]], context: _SceneContext) -> dict[str, Item]:
         items_by_id: dict[str, Item] = {}
-        for index, item_def in enumerate(item_defs):
+        for item_def in item_defs:
             item_id = str(item_def["id"])
             item = self.game.CreateItem()
             item.name = str(item_def["name"])
@@ -97,9 +91,7 @@ class SceneLoader:
             item.transform = _scene_transform(item_def.get("transform") or {})
 
             items_by_id[item_id] = item
-            context.objects_by_node_index[index] = item
             context.objects_by_easycells_id[item_id] = item
-            context.objects_by_name[_unique_name(item.name, context.objects_by_name)] = item
         return items_by_id
 
     def _apply_hierarchy(self, item_defs: list[dict[str, Any]], items_by_id: dict[str, Item]) -> None:
@@ -118,7 +110,7 @@ class SceneLoader:
         scene_context: _SceneContext,
     ) -> list[_PendingSerializedFields]:
         pending_fields: list[_PendingSerializedFields] = []
-        for index, item_def in enumerate(item_defs):
+        for item_def in item_defs:
             item = items_by_id[str(item_def["id"])]
             components = item_def.get("components") or []
             if not isinstance(components, list):
@@ -129,8 +121,6 @@ class SceneLoader:
                 item=item,
                 node=item_def,
                 scene_path=str(scene_context.scene_path),
-                objects_by_name=scene_context.objects_by_name,
-                objects_by_node_index=scene_context.objects_by_node_index,
                 objects_by_easycells_id=scene_context.objects_by_easycells_id,
                 assets=scene_context.assets,
                 components_by_id=scene_context.components_by_id,
@@ -155,7 +145,6 @@ class SceneLoader:
                 item.AddComponent(component)
 
                 scene_context.components_by_id[component_id] = component
-                scene_context.components_by_item_id.setdefault(str(item_def["id"]), []).append(component)
                 pending_fields.append(_PendingSerializedFields(item, component, component_def, creation_context))
 
         return pending_fields
@@ -304,25 +293,16 @@ def _resolve_serialized_value(
             raise KeyError(f"SceneLoader: componentRef nao encontrado: {component_id}")
         return component
 
-    reference = value.get("$id") or value.get("$ref")
-    if reference:
+    if "$id" in value:
+        raise ValueError("SceneLoader: use '$ref' para referencia de Item")
+
+    if "$ref" in value:
         if not allow_scene_refs:
             raise ValueError("SceneLoader: args nao pode conter ItemRef ou ComponentRef")
-        item = None
-        if context.objects_by_easycells_id:
-            item = context.objects_by_easycells_id.get(str(reference))
-        if item is None:
-            item = context.objects_by_name.get(str(reference))
+        reference = str(value["$ref"])
+        item = (context.objects_by_easycells_id or {}).get(reference)
         if item is None:
             raise KeyError(f"SceneLoader: referencia nao encontrada: {reference}")
-
-        component_type = value.get("$component")
-        if component_type:
-            return _find_component_on_item(item, str(component_type))
-        if field is not None and field.ref == "component":
-            component_type = value.get("type") or value.get("component")
-            if component_type:
-                return _find_component_on_item(item, str(component_type))
         return item
 
     return {
@@ -369,20 +349,6 @@ def _apply_asset_selector(asset: Any, selector: Any) -> Any:
     raise ValueError("SceneLoader: selector.args deve ser objeto ou lista")
 
 
-def _find_component_on_item(item: Item, component_type: str):
-    matches = []
-    for component in set(item.components.values()):
-        cls = component.__class__
-        if component_type in {cls.__name__, f"{cls.__module__}.{cls.__name__}"}:
-            matches.append(component)
-    if len(matches) != 1:
-        raise KeyError(
-            f"componente '{component_type}' deve existir exatamente uma vez em '{item.name}', "
-            f"encontrados {len(matches)}"
-        )
-    return matches[0]
-
-
 def _coerce_serialized_value(value: Any, field) -> Any:
     if field is None:
         return value
@@ -398,15 +364,6 @@ def _coerce_serialized_value(value: Any, field) -> Any:
     if field_type in {"str", "string"} and value is not None:
         return str(value)
     return value
-
-
-def _unique_name(name: str, existing: dict[str, Item]) -> str:
-    if name not in existing:
-        return name
-    index = 2
-    while f"{name}.{index}" in existing:
-        index += 1
-    return f"{name}.{index}"
 
 
 def _find_project_root(scene_path: Path) -> Path:

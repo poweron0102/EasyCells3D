@@ -169,6 +169,18 @@ class SceneLoaderV2Tests(unittest.TestCase):
         with self.assertRaises(KeyError):
             _load_scene(scene)
 
+    def test_rejects_item_ref_by_name(self):
+        scene = _scene_with_child_ref({"$ref": "Child"})
+
+        with self.assertRaises(KeyError):
+            _load_scene(scene)
+
+    def test_rejects_old_id_ref_alias(self):
+        scene = _scene_with_child_ref({"$id": "3"})
+
+        with self.assertRaises(ValueError):
+            _load_scene(scene)
+
     def test_discovers_asset_metadata_ast_and_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -229,6 +241,18 @@ def _minimal_scene(args):
             }
         ],
     }
+
+
+def _scene_with_child_ref(ref):
+    scene = _minimal_scene({})
+    scene["Item"][0]["components"][0]["fields"] = {"target": ref}
+    scene["Item"].append({
+        "id": "3",
+        "name": "Child",
+        "parent": "1",
+        "components": [],
+    })
+    return scene
 
 
 def _load_scene(scene):
