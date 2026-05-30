@@ -18,6 +18,11 @@ DEFAULT_COMPONENT_PACKAGES = (
     "UserComponents",
 )
 
+DEFAULT_ASSET_PACKAGES = (
+    "EasyCells3D.AssetTypes",
+    "UserAssets",
+)
+
 
 @dataclass
 class ParameterMetadata:
@@ -52,6 +57,30 @@ class ComponentMetadata:
         return data
 
 
+@dataclass
+class ExportedMethodMetadata:
+    name: str
+    required_args: list[ParameterMetadata] = field(default_factory=list)
+    optional_args: list[ParameterMetadata] = field(default_factory=list)
+    return_type: str = "Any"
+
+
+@dataclass
+class AssetMetadata:
+    name: str
+    class_path: str
+    module: str
+    required_args: list[ParameterMetadata] = field(default_factory=list)
+    optional_args: list[ParameterMetadata] = field(default_factory=list)
+    methods: dict[str, ExportedMethodMetadata] = field(default_factory=dict)
+    asset_cls: type | None = field(default=None, repr=False, compare=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data.pop("asset_cls", None)
+        return data
+
+
 def discover_components(
     project_root: str | Path | None = None,
     mode: str = "runtime",
@@ -61,6 +90,30 @@ def discover_components(
         return discover_components_ast(project_root, packages)
     if mode == "runtime":
         return discover_components_runtime(project_root, packages)
+    raise ValueError(f"modo de descoberta desconhecido: {mode}")
+
+
+def discover_project_metadata(
+    project_root: str | Path | None = None,
+    mode: str = "runtime",
+    component_packages: tuple[str, ...] = DEFAULT_COMPONENT_PACKAGES,
+    asset_packages: tuple[str, ...] = DEFAULT_ASSET_PACKAGES,
+) -> dict[str, list[ComponentMetadata] | list[AssetMetadata]]:
+    return {
+        "components": discover_components(project_root, mode, component_packages),
+        "assets": discover_assets(project_root, mode, asset_packages),
+    }
+
+
+def discover_assets(
+    project_root: str | Path | None = None,
+    mode: str = "runtime",
+    packages: tuple[str, ...] = DEFAULT_ASSET_PACKAGES,
+) -> list[AssetMetadata]:
+    if mode == "ast":
+        return discover_assets_ast(project_root, packages)
+    if mode == "runtime":
+        return discover_assets_runtime(project_root, packages)
     raise ValueError(f"modo de descoberta desconhecido: {mode}")
 
 
@@ -126,8 +179,102 @@ def discover_components_ast(
     return list(discovered.values())
 
 
+def discover_assets_runtime(
+    project_root: str | Path | None = None,
+    packages: tuple[str, ...] = DEFAULT_ASSET_PACKAGES,
+) -> list[AssetMetadata]:
+    _ensure_project_root(project_root)
+
+    from EasyCells3D.Assets import Asset, get_exported_method_metadata, init_parameters
+
+    discovered: dict[str, AssetMetadata] = {}
+    for module_name in _iter_runtime_modules(packages):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as exc:
+            warnings.warn(f"ComponentDiscovery: falha ao importar {module_name}: {exc}")
+            continue
+
+        for _, obj in inspect.getmembers(module, inspect.isclass):
+            if obj is Asset or obj.__module__ != module.__name__:
+                continue
+            try:
+                if not issubclass(obj, Asset):
+                    continue
+            except TypeError:
+                continue
+
+            required_args, optional_args = init_parameters(obj)
+            metadata = AssetMetadata(
+                name=obj.__name__,
+                class_path=f"{obj.__module__}.{obj.__name__}",
+                module=obj.__module__,
+                required_args=[
+                    ParameterMetadata(arg.name, arg.type, arg.default, arg.required)
+                    for arg in required_args
+                ],
+                optional_args=[
+                    ParameterMetadata(arg.name, arg.type, arg.default, arg.required)
+                    for arg in optional_args
+                ],
+                methods={
+                    name: ExportedMethodMetadata(
+                        name=method.name,
+                        required_args=[
+                            ParameterMetadata(arg.name, arg.type, arg.default, arg.required)
+                            for arg in method.required_args
+                        ],
+                        optional_args=[
+                            ParameterMetadata(arg.name, arg.type, arg.default, arg.required)
+                            for arg in method.optional_args
+                        ],
+                        return_type=method.return_type,
+                    )
+                    for name, method in get_exported_method_metadata(obj).items()
+                },
+                asset_cls=obj,
+            )
+            discovered[metadata.class_path] = metadata
+
+    return list(discovered.values())
+
+
+def discover_assets_ast(
+    project_root: str | Path | None = None,
+    packages: tuple[str, ...] = DEFAULT_ASSET_PACKAGES,
+) -> list[AssetMetadata]:
+    root = Path(project_root or Path.cwd()).resolve()
+    discovered: dict[str, AssetMetadata] = {}
+
+    for package in packages:
+        package_dir = root.joinpath(*package.split("."))
+        if not package_dir.exists():
+            continue
+
+        for filepath in package_dir.rglob("*.py"):
+            if filepath.name == "__init__.py":
+                continue
+            module_name = _module_name_from_file(root, filepath)
+            try:
+                tree = ast.parse(filepath.read_text(encoding="utf-8"), filename=str(filepath))
+            except Exception as exc:
+                warnings.warn(f"ComponentDiscovery: falha ao analisar {filepath}: {exc}")
+                continue
+
+            for node in tree.body:
+                if isinstance(node, ast.ClassDef) and _inherits_asset(node):
+                    metadata = _asset_metadata_from_ast_class(node, module_name)
+                    discovered[metadata.class_path] = metadata
+
+    return list(discovered.values())
+
+
 def components_to_dicts(components: list[ComponentMetadata]) -> list[dict[str, Any]]:
     return [component.to_dict() for component in components]
+
+
+def assets_to_dicts(assets: list[AssetMetadata]) -> list[dict[str, Any]]:
+    return [asset.to_dict() for asset in assets]
 
 
 def _ensure_project_root(project_root: str | Path | None) -> None:
@@ -222,6 +369,33 @@ def _metadata_from_ast_class(node: ast.ClassDef, module_name: str) -> ComponentM
     )
 
 
+def _asset_metadata_from_ast_class(node: ast.ClassDef, module_name: str) -> AssetMetadata:
+    required_args: list[ParameterMetadata] = []
+    optional_args: list[ParameterMetadata] = []
+    methods: dict[str, ExportedMethodMetadata] = {}
+
+    for child in node.body:
+        if isinstance(child, ast.FunctionDef) and child.name == "__init__":
+            required_args, optional_args = _ast_init_parameters(child)
+        if isinstance(child, ast.FunctionDef) and _has_export_decorator(child):
+            required, optional = _ast_init_parameters(child)
+            methods[child.name] = ExportedMethodMetadata(
+                name=child.name,
+                required_args=required,
+                optional_args=optional,
+                return_type=_annotation_to_string(child.returns),
+            )
+
+    return AssetMetadata(
+        name=node.name,
+        class_path=f"{module_name}.{node.name}",
+        module=module_name,
+        required_args=required_args,
+        optional_args=optional_args,
+        methods=methods,
+    )
+
+
 def _ast_init_parameters(node: ast.FunctionDef) -> tuple[list[ParameterMetadata], list[ParameterMetadata]]:
     args = node.args.posonlyargs + node.args.args
     if args and args[0].arg == "self":
@@ -295,6 +469,20 @@ def _ast_serialized_field(node: ast.AST) -> tuple[str | None, SerializedFieldMet
 def _inherits_component(node: ast.ClassDef) -> bool:
     for base in node.bases:
         if _call_name(base) == "Component":
+            return True
+    return False
+
+
+def _inherits_asset(node: ast.ClassDef) -> bool:
+    for base in node.bases:
+        if _call_name(base) == "Asset":
+            return True
+    return False
+
+
+def _has_export_decorator(node: ast.FunctionDef) -> bool:
+    for decorator in node.decorator_list:
+        if _call_name(decorator) == "export":
             return True
     return False
 

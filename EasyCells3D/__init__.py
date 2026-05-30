@@ -5,6 +5,7 @@ from .SceneLoader import SceneLoader
 from .BlockbenchSceneLoader import BlockbenchSceneLoader
 from .ComponentRegistry import ComponentCreationContext, ComponentRegistry
 from .Serialization import SerializeField
+from .Assets import Asset, export
 from .scheduler import Scheduler, Tick
 
 __all__ = [
@@ -16,6 +17,8 @@ __all__ = [
     "ComponentCreationContext",
     "ComponentRegistry",
     "SerializeField",
+    "Asset",
+    "export",
     "Scheduler",
     "Tick",
     "Components",

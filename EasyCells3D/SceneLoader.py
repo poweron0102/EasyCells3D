@@ -1,18 +1,17 @@
 import json
 import math
-import struct
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pyray as rl
-
+from EasyCells3D.Assets import Asset
 from EasyCells3D.ComponentRegistry import ComponentCreationContext, ComponentRegistry
-from EasyCells3D.Components import AnimatedModel, Animator3D, Camera3D, Item, Light3D, StaticModel, Transform
+from EasyCells3D.Components import Item, Transform
 from EasyCells3D.Geometry import Quaternion, Vec3
 from EasyCells3D.Serialization import get_serialized_fields
+
+
+UINT128_MAX = 340282366920938463463374607431768211455
 
 
 @dataclass
@@ -23,6 +22,17 @@ class _PendingSerializedFields:
     context: ComponentCreationContext
 
 
+@dataclass
+class _SceneContext:
+    scene_path: Path
+    assets: dict[str, Any]
+    objects_by_name: dict[str, Item]
+    objects_by_node_index: dict[int, Item]
+    objects_by_easycells_id: dict[str, Item]
+    components_by_id: dict[str, Any]
+    components_by_item_id: dict[str, list[Any]]
+
+
 class SceneLoader:
     def __init__(self, game, component_registry: type[ComponentRegistry] = ComponentRegistry):
         self.game = game
@@ -30,399 +40,281 @@ class SceneLoader:
 
     def load(self, path: str | Path) -> list[Item]:
         scene_path = Path(path)
-        document = _load_gltf_document(scene_path)
+        document = _load_scene_document(scene_path)
         self.component_registry.ensure_discovered(_find_project_root(scene_path))
-        nodes = document.get("nodes", [])
-        scene_index = document.get("scene", 0)
-        scenes = document.get("scenes", [])
-        root_node_indices = scenes[scene_index].get("nodes", []) if scenes else list(range(len(nodes)))
 
-        objects_by_name: dict[str, Item] = {}
-        objects_by_node_index: dict[int, Item] = {}
-        objects_by_easycells_id: dict[str, Item] = {}
+        _validate_scene_header(document, scene_path)
+        item_defs = document["Item"]
+        _validate_ids_and_parents(item_defs)
 
-        mesh_draw_indices = _mesh_draw_indices(document)
+        context = _SceneContext(
+            scene_path=scene_path,
+            assets=self._create_global_assets(document.get("assets") or {}),
+            objects_by_name={},
+            objects_by_node_index={},
+            objects_by_easycells_id={},
+            components_by_id={},
+            components_by_item_id={},
+        )
 
-        def create_node(node_index: int, parent: Item | None = None, suppress_static_model: bool = False) -> Item:
-            node = nodes[node_index]
-            item = parent.CreateChild() if parent else self.game.CreateItem()
-            item.name = node.get("name") or f"Node_{node_index}"
-            item.transform = _node_transform(node)
-            animated_model_def = _extract_animated_model_def(node)
-
-            unique_name = _unique_name(item.name, objects_by_name)
-            objects_by_name[unique_name] = item
-            objects_by_node_index[node_index] = item
-            easycells_id = _extract_easycells_id(node)
-            if easycells_id:
-                item.easycells_id = easycells_id
-                objects_by_easycells_id[easycells_id] = item
-
-            if animated_model_def:
-                item.AddComponent(_animated_model_component_from_gltf(animated_model_def, scene_path))
-                if not _node_has_component_type(node, {"Animator3D", "EasyCells3D.Components.Animator3D.Animator3D"}):
-                    item.AddComponent(Animator3D(
-                        current_animation=animated_model_def.get("current_animation"),
-                        autoplay=bool(animated_model_def.get("autoplay", True)),
-                    ))
-
-            if "mesh" in node and not suppress_static_model and not animated_model_def:
-                mesh_index = int(node["mesh"])
-                primitive_count = _primitive_count(document, mesh_index)
-                mesh_indices = list(range(mesh_draw_indices[mesh_index], mesh_draw_indices[mesh_index] + primitive_count))
-                item.AddComponent(StaticModel(
-                    str(scene_path),
-                    base_path=".",
-                    mesh_index=mesh_indices,
-                    shared=True,
-                    baked_transform=item.global_transform_get().clone(),
-                ))
-
-            _add_native_gltf_components(item, node, document)
-
-            for child_index in node.get("children", []):
-                create_node(child_index, item, suppress_static_model or bool(animated_model_def))
-
-            return item
-
-        root_items = [create_node(node_index) for node_index in root_node_indices]
-        if root_items and mesh_draw_indices and not _scene_has_configured_components(nodes) and not _scene_has_animated_models(nodes):
-            root_items[0].AddComponent(StaticModel(
-                str(scene_path),
-                base_path=".",
-                shared=True,
-                fallback_only=True,
-            ))
-
-        pending_fields: list[_PendingSerializedFields] = []
-        for node_index, item in list(objects_by_node_index.items()):
-            context = ComponentCreationContext(
-                game=self.game,
-                item=item,
-                node=nodes[node_index],
-                scene_path=str(scene_path),
-                objects_by_name=objects_by_name,
-                objects_by_node_index=objects_by_node_index,
-                objects_by_easycells_id=objects_by_easycells_id,
-            )
-            pending_fields.extend(self._add_configured_components(item, nodes[node_index], context))
+        items_by_id = self._create_items(item_defs, context)
+        self._apply_hierarchy(item_defs, items_by_id)
+        pending_fields = self._create_components(item_defs, items_by_id, context)
 
         for pending in pending_fields:
             self._apply_serialized_fields(pending)
 
-        return root_items
+        return [items_by_id[item_def["id"]] for item_def in item_defs if item_def.get("parent") is None]
 
-    def _add_configured_components(
+    def _create_global_assets(self, asset_defs: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(asset_defs, dict):
+            raise ValueError("SceneLoader: assets deve ser objeto")
+
+        assets: dict[str, Any] = {}
+        for name, asset_def in asset_defs.items():
+            if not isinstance(asset_def, dict):
+                raise ValueError(f"SceneLoader: asset '{name}' deve ser objeto")
+            assets[str(name)] = self._create_asset_from_definition(asset_def)
+        return assets
+
+    def _create_asset_from_definition(self, asset_def: dict[str, Any]) -> Any:
+        type_name = asset_def.get("type")
+        args = asset_def.get("args") or {}
+        if type_name and self.component_registry.get_asset(str(type_name)) is not None:
+            if not isinstance(args, dict):
+                raise ValueError(f"SceneLoader: args do asset '{type_name}' deve ser objeto")
+            return self.component_registry.create_asset(str(type_name), args)
+        return dict(asset_def)
+
+    def _create_items(self, item_defs: list[dict[str, Any]], context: _SceneContext) -> dict[str, Item]:
+        items_by_id: dict[str, Item] = {}
+        for index, item_def in enumerate(item_defs):
+            item_id = str(item_def["id"])
+            item = self.game.CreateItem()
+            item.name = str(item_def["name"])
+            item.easycells_id = item_id
+            item.enabled = bool(item_def.get("enabled", True))
+            item.transform = _scene_transform(item_def.get("transform") or {})
+
+            items_by_id[item_id] = item
+            context.objects_by_node_index[index] = item
+            context.objects_by_easycells_id[item_id] = item
+            context.objects_by_name[_unique_name(item.name, context.objects_by_name)] = item
+        return items_by_id
+
+    def _apply_hierarchy(self, item_defs: list[dict[str, Any]], items_by_id: dict[str, Item]) -> None:
+        for item_def in item_defs:
+            parent_id = item_def.get("parent")
+            if parent_id is None:
+                continue
+            item = items_by_id[str(item_def["id"])]
+            parent = items_by_id[str(parent_id)]
+            parent.AddChild(item)
+
+    def _create_components(
         self,
-        item: Item,
-        node: dict,
-        context: ComponentCreationContext,
+        item_defs: list[dict[str, Any]],
+        items_by_id: dict[str, Item],
+        scene_context: _SceneContext,
     ) -> list[_PendingSerializedFields]:
         pending_fields: list[_PendingSerializedFields] = []
-        for component_def in _extract_component_defs(node):
-            type_name = component_def.get("type")
-            args = component_def.get("args", {})
-            if not type_name:
-                warnings.warn(f"SceneLoader: componente sem 'type' no objeto '{item.name}'")
-                continue
+        for index, item_def in enumerate(item_defs):
+            item = items_by_id[str(item_def["id"])]
+            components = item_def.get("components") or []
+            if not isinstance(components, list):
+                raise ValueError(f"SceneLoader: components deve ser lista em '{item.name}'")
 
-            try:
-                component = self.component_registry.create(type_name, args, context)
+            creation_context = ComponentCreationContext(
+                game=self.game,
+                item=item,
+                node=item_def,
+                scene_path=str(scene_context.scene_path),
+                objects_by_name=scene_context.objects_by_name,
+                objects_by_node_index=scene_context.objects_by_node_index,
+                objects_by_easycells_id=scene_context.objects_by_easycells_id,
+                assets=scene_context.assets,
+                components_by_id=scene_context.components_by_id,
+                component_registry=self.component_registry,
+            )
+
+            for component_def in components:
+                if not isinstance(component_def, dict):
+                    raise ValueError(f"SceneLoader: componente invalido em '{item.name}'")
+                component_id = str(component_def["id"])
+                type_name = component_def.get("type")
+                if not type_name:
+                    raise ValueError(f"SceneLoader: componente sem 'type' em '{item.name}'")
+
+                args = component_def.get("args") or {}
+                if not isinstance(args, dict):
+                    raise ValueError(f"SceneLoader: args deve ser objeto em '{item.name}' ({type_name})")
+                resolved_args = _resolve_serialized_value(args, None, creation_context, allow_scene_refs=False)
+                component = self.component_registry.create(str(type_name), resolved_args, creation_context)
+                component.enable = bool(component_def.get("enabled", True))
+                component.easycells_id = component_id
                 item.AddComponent(component)
-                pending_fields.append(_PendingSerializedFields(item, component, component_def, context))
-            except Exception as exc:
-                warnings.warn(
-                    f"SceneLoader: erro ao criar componente '{type_name}' no objeto "
-                    f"'{item.name}': {exc}"
-                )
+
+                scene_context.components_by_id[component_id] = component
+                scene_context.components_by_item_id.setdefault(str(item_def["id"]), []).append(component)
+                pending_fields.append(_PendingSerializedFields(item, component, component_def, creation_context))
+
         return pending_fields
 
     def _apply_serialized_fields(self, pending: _PendingSerializedFields) -> None:
         fields = pending.component_def.get("fields") or {}
         if not isinstance(fields, dict):
-            warnings.warn(
+            raise ValueError(
                 f"SceneLoader: fields deve ser objeto em '{pending.item.name}' "
                 f"({pending.component.__class__.__name__})"
             )
-            return
 
         declared_fields = get_serialized_fields(pending.component.__class__)
         for name, raw_value in fields.items():
             field = declared_fields.get(name)
-            try:
-                value = _resolve_serialized_value(raw_value, field, pending.context)
-                value = _coerce_serialized_value(value, field)
-                setattr(pending.component, name, value)
-            except Exception as exc:
-                warnings.warn(
-                    f"SceneLoader: erro ao aplicar field '{name}' em "
-                    f"{pending.component.__class__.__name__} no objeto '{pending.item.name}': {exc}"
-                )
+            value = _resolve_serialized_value(raw_value, field, pending.context, allow_scene_refs=True)
+            value = _coerce_serialized_value(value, field)
+            setattr(pending.component, name, value)
 
 
-def _load_gltf_document(path: Path) -> dict[str, Any]:
-    suffix = path.suffix.lower()
-    if suffix == ".gltf":
-        with path.open("r", encoding="utf-8") as file:
-            return json.load(file)
-    if suffix == ".glb":
-        return _load_glb_json(path)
-    raise ValueError(f"SceneLoader suporta apenas .glb e .gltf: {path}")
+def _load_scene_document(path: Path) -> dict[str, Any]:
+    if path.suffix.lower() != ".ecscene":
+        raise ValueError(f"SceneLoader suporta apenas .ecscene v2: {path}")
+    with path.open("r", encoding="utf-8") as file:
+        document = json.load(file)
+    if not isinstance(document, dict):
+        raise ValueError(f"SceneLoader: documento invalido: {path}")
+    return document
 
 
-def _load_glb_json(path: Path) -> dict[str, Any]:
-    data = path.read_bytes()
-    magic, version, length = struct.unpack_from("<III", data, 0)
-    if magic != 0x46546C67:
-        raise ValueError(f"arquivo GLB invalido: {path}")
-    if version != 2:
-        raise ValueError(f"SceneLoader suporta GLB versao 2, recebido {version}: {path}")
-    if length != len(data):
-        raise ValueError(f"tamanho GLB inconsistente: {path}")
-
-    offset = 12
-    while offset < length:
-        chunk_length, chunk_type = struct.unpack_from("<II", data, offset)
-        offset += 8
-        chunk = data[offset:offset + chunk_length]
-        offset += chunk_length
-        if chunk_type == 0x4E4F534A:
-            return json.loads(chunk.decode("utf-8").rstrip("\x00 "))
-
-    raise ValueError(f"GLB sem chunk JSON: {path}")
+def _validate_scene_header(document: dict[str, Any], scene_path: Path) -> None:
+    if document.get("format") != "easycells3d.scene":
+        raise ValueError(f"arquivo nao e uma cena EasyCells3D v2: {scene_path}")
+    if document.get("version") != 2:
+        raise ValueError(f"SceneLoader: versao de cena nao suportada: {document.get('version')}")
+    if "Item" not in document or not isinstance(document["Item"], list):
+        raise ValueError("SceneLoader: campo 'Item' deve existir e ser lista")
+    for item_def in document["Item"]:
+        if not isinstance(item_def, dict):
+            raise ValueError("SceneLoader: cada Item deve ser objeto")
+        if "id" not in item_def:
+            raise ValueError("SceneLoader: Item sem id")
+        if "name" not in item_def:
+            raise ValueError(f"SceneLoader: Item '{item_def.get('id')}' sem name")
+        if "parent" not in item_def:
+            raise ValueError(f"SceneLoader: Item '{item_def.get('id')}' sem parent")
 
 
-def _node_transform(node: dict) -> Transform:
-    if "matrix" in node:
-        return _transform_from_matrix(node["matrix"])
+def _validate_ids_and_parents(item_defs: list[dict[str, Any]]) -> None:
+    ids: set[str] = set()
+    item_ids: set[str] = set()
+    for item_def in item_defs:
+        item_id = _validate_uint128_id(item_def["id"], "Item.id")
+        if item_id in ids:
+            raise ValueError(f"SceneLoader: id duplicado: {item_id}")
+        ids.add(item_id)
+        item_ids.add(item_id)
 
-    translation = node.get("translation", [0.0, 0.0, 0.0])
-    rotation = node.get("rotation", [0.0, 0.0, 0.0, 1.0])
-    scale = node.get("scale", [1.0, 1.0, 1.0])
+        components = item_def.get("components") or []
+        if not isinstance(components, list):
+            raise ValueError(f"SceneLoader: components deve ser lista em '{item_def.get('name')}'")
+        for component_def in components:
+            if not isinstance(component_def, dict):
+                raise ValueError(f"SceneLoader: componente invalido em '{item_def.get('name')}'")
+            if "id" not in component_def:
+                raise ValueError(f"SceneLoader: componente sem id em '{item_def.get('name')}'")
+            component_id = _validate_uint128_id(component_def["id"], "Component.id")
+            if component_id in ids:
+                raise ValueError(f"SceneLoader: id duplicado: {component_id}")
+            ids.add(component_id)
 
+    for item_def in item_defs:
+        parent = item_def.get("parent")
+        if parent is None:
+            continue
+        parent_id = _validate_uint128_id(parent, "Item.parent")
+        if parent_id not in item_ids:
+            raise KeyError(f"SceneLoader: parent nao encontrado: {parent_id}")
+
+
+def _validate_uint128_id(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.isdecimal():
+        raise ValueError(f"SceneLoader: {field_name} deve ser UInt128 decimal string: {value!r}")
+    number = int(value)
+    if number < 0 or number > UINT128_MAX:
+        raise ValueError(f"SceneLoader: {field_name} fora do intervalo UInt128: {value!r}")
+    return value
+
+
+def _scene_transform(transform_def: dict[str, Any]) -> Transform:
+    if not isinstance(transform_def, dict):
+        raise ValueError("SceneLoader: transform deve ser objeto")
+    position = _vec3(transform_def.get("position"), [0.0, 0.0, 0.0], "transform.position")
+    rotation = _vec3(transform_def.get("rotation"), [0.0, 0.0, 0.0], "transform.rotation")
+    scale = _vec3(transform_def.get("scale"), [1.0, 1.0, 1.0], "transform.scale")
     return Transform(
-        Vec3(float(translation[0]), float(translation[1]), float(translation[2])),
-        Quaternion(float(rotation[3]), float(rotation[0]), float(rotation[1]), float(rotation[2])).normalize(),
-        Vec3(float(scale[0]), float(scale[1]), float(scale[2])),
+        Vec3(position[0], position[1], position[2]),
+        Quaternion.from_euler_angles(Vec3(
+            math.radians(rotation[0]),
+            math.radians(rotation[1]),
+            math.radians(rotation[2]),
+        )),
+        Vec3(scale[0], scale[1], scale[2]),
     )
 
 
-def _transform_from_matrix(values: list[float]) -> Transform:
-    matrix = np.array(values, dtype=float).reshape((4, 4), order="F")
-    translation = matrix[:3, 3]
-
-    basis = matrix[:3, :3].copy()
-    scale = np.linalg.norm(basis, axis=0)
-    for index in range(3):
-        if scale[index] != 0:
-            basis[:, index] /= scale[index]
-
-    return Transform(
-        Vec3(float(translation[0]), float(translation[1]), float(translation[2])),
-        _quaternion_from_rotation_matrix(basis),
-        Vec3(float(scale[0]), float(scale[1]), float(scale[2])),
-    )
+def _vec3(value: Any, default: list[float], field_name: str) -> list[float]:
+    if value is None:
+        return list(default)
+    if not isinstance(value, list | tuple) or len(value) != 3:
+        raise ValueError(f"SceneLoader: {field_name} deve ter 3 numeros")
+    return [float(value[0]), float(value[1]), float(value[2])]
 
 
-def _quaternion_from_rotation_matrix(matrix: np.ndarray) -> Quaternion:
-    trace = float(np.trace(matrix))
-    if trace > 0.0:
-        s = math.sqrt(trace + 1.0) * 2.0
-        return Quaternion(
-            0.25 * s,
-            (matrix[2, 1] - matrix[1, 2]) / s,
-            (matrix[0, 2] - matrix[2, 0]) / s,
-            (matrix[1, 0] - matrix[0, 1]) / s,
-        ).normalize()
-
-    axis = int(np.argmax(np.diag(matrix)))
-    if axis == 0:
-        s = math.sqrt(1.0 + matrix[0, 0] - matrix[1, 1] - matrix[2, 2]) * 2.0
-        return Quaternion((matrix[2, 1] - matrix[1, 2]) / s, 0.25 * s, (matrix[0, 1] + matrix[1, 0]) / s, (matrix[0, 2] + matrix[2, 0]) / s).normalize()
-    if axis == 1:
-        s = math.sqrt(1.0 + matrix[1, 1] - matrix[0, 0] - matrix[2, 2]) * 2.0
-        return Quaternion((matrix[0, 2] - matrix[2, 0]) / s, (matrix[0, 1] + matrix[1, 0]) / s, 0.25 * s, (matrix[1, 2] + matrix[2, 1]) / s).normalize()
-
-    s = math.sqrt(1.0 + matrix[2, 2] - matrix[0, 0] - matrix[1, 1]) * 2.0
-    return Quaternion((matrix[1, 0] - matrix[0, 1]) / s, (matrix[0, 2] + matrix[2, 0]) / s, (matrix[1, 2] + matrix[2, 1]) / s, 0.25 * s).normalize()
-
-
-def _extract_component_defs(node: dict) -> list[dict]:
-    extras = node.get("extras") or {}
-    if isinstance(extras, str):
-        try:
-            extras = json.loads(extras)
-        except json.JSONDecodeError:
-            return []
-
-    raw_components = extras.get("components") or extras.get("easycells_components")
-    if raw_components is None and isinstance(extras.get("EasyCells3D"), dict):
-        raw_components = extras["EasyCells3D"].get("components")
-
-    if isinstance(raw_components, str):
-        try:
-            raw_components = json.loads(raw_components)
-        except json.JSONDecodeError:
-            warnings.warn(f"SceneLoader: components invalido em '{node.get('name', '<sem nome>')}'")
-            return []
-
-    if not raw_components:
-        return []
-    if not isinstance(raw_components, list):
-        warnings.warn(f"SceneLoader: components deve ser lista em '{node.get('name', '<sem nome>')}'")
-        return []
-    return [entry for entry in raw_components if isinstance(entry, dict)]
-
-
-def _extract_animated_model_def(node: dict) -> dict | None:
-    extras = _node_extras(node)
-    if not extras:
-        return None
-    value = extras.get("easycells_animated_model") or extras.get("animated_model")
-    if value is None and isinstance(extras.get("EasyCells3D"), dict):
-        value = extras["EasyCells3D"].get("animated_model")
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except json.JSONDecodeError:
-            value = {"path": value}
-    if isinstance(value, dict) and value.get("path"):
-        return value
-    return None
-
-
-def _animated_model_component_from_gltf(animated_model_def: dict, scene_path: Path) -> AnimatedModel:
-    return AnimatedModel(
-        _resolve_animated_model_path(str(animated_model_def["path"]), scene_path),
-        clip_names=_string_list(animated_model_def.get("clip_names")),
-        clip_fps=float(animated_model_def.get("clip_fps", 24.0)),
-        base_path=".",
-    )
-
-
-def _resolve_animated_model_path(path: str, scene_path: Path) -> str:
-    model_path = Path(path)
-    if model_path.is_absolute() or model_path.exists():
-        return str(model_path)
-    scene_relative = scene_path.parent / model_path
-    if scene_relative.exists():
-        return str(scene_relative)
-    return path
-
-
-def _string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(entry) for entry in value if entry is not None]
-
-
-def _add_native_gltf_components(item: Item, node: dict, document: dict[str, Any]) -> None:
-    if "camera" in node and not _node_has_component_type(node, {"Camera3D", "EasyCells3D.Components.Camera3D.Camera3D"}):
-        component = _camera_component_from_gltf(node["camera"], document)
-        if component:
-            item.AddComponent(component)
-
-    if not _node_has_component_type(node, {"Light3D", "EasyCells3D.Components.Light3D.Light3D"}):
-        component = _light_component_from_gltf(node, document)
-        if component:
-            item.AddComponent(component)
-
-
-def _camera_component_from_gltf(camera_index: Any, document: dict[str, Any]) -> Camera3D | None:
-    cameras = document.get("cameras") or []
-    try:
-        camera = cameras[int(camera_index)]
-    except (IndexError, TypeError, ValueError):
-        warnings.warn(f"SceneLoader: camera glTF invalida: {camera_index}")
-        return None
-
-    camera_type = camera.get("type", "perspective")
-    if camera_type == "orthographic":
-        orthographic = camera.get("orthographic") or {}
-        ymag = float(orthographic.get("ymag", orthographic.get("xmag", 5.0)))
-        return Camera3D(
-            vfov=ymag * 2.0,
-            projection=rl.CameraProjection.CAMERA_ORTHOGRAPHIC,
-        )
-
-    perspective = camera.get("perspective") or {}
-    yfov = float(perspective.get("yfov", math.radians(60.0)))
-    return Camera3D(vfov=math.degrees(yfov))
-
-
-def _light_component_from_gltf(node: dict, document: dict[str, Any]) -> Light3D | None:
-    extension = (node.get("extensions") or {}).get("KHR_lights_punctual")
-    if not isinstance(extension, dict) or "light" not in extension:
-        return None
-
-    lights = ((document.get("extensions") or {}).get("KHR_lights_punctual") or {}).get("lights") or []
-    try:
-        light = lights[int(extension["light"])]
-    except (IndexError, TypeError, ValueError):
-        warnings.warn(f"SceneLoader: luz glTF invalida: {extension.get('light')}")
-        return None
-
-    spot = light.get("spot") or {}
-    return Light3D(
-        light_type=light.get("type", "point"),
-        color=light.get("color", [1.0, 1.0, 1.0]),
-        intensity=light.get("intensity", 1.0),
-        range=light.get("range"),
-        inner_cone_angle=spot.get("innerConeAngle", 0.0),
-        outer_cone_angle=spot.get("outerConeAngle", math.pi / 4.0),
-        name=light.get("name"),
-    )
-
-
-def _node_has_component_type(node: dict, type_names: set[str]) -> bool:
-    for component_def in _extract_component_defs(node):
-        type_name = component_def.get("type")
-        if type_name in type_names:
-            return True
-    return False
-
-
-def _scene_has_configured_components(nodes: list[dict]) -> bool:
-    return any(_extract_component_defs(node) for node in nodes)
-
-
-def _scene_has_animated_models(nodes: list[dict]) -> bool:
-    return any(_extract_animated_model_def(node) for node in nodes)
-
-
-def _extract_easycells_id(node: dict) -> str | None:
-    extras = _node_extras(node)
-    if not isinstance(extras, dict):
-        return None
-    value = extras.get("easycells_id")
-    return str(value) if value else None
-
-
-def _node_extras(node: dict) -> dict:
-    extras = node.get("extras") or {}
-    if isinstance(extras, str):
-        try:
-            return json.loads(extras)
-        except json.JSONDecodeError:
-            return {}
-    if not isinstance(extras, dict):
-        return {}
-    return extras
-
-
-def _resolve_serialized_value(value: Any, field, context: ComponentCreationContext) -> Any:
+def _resolve_serialized_value(
+    value: Any,
+    field,
+    context: ComponentCreationContext,
+    allow_scene_refs: bool = True,
+) -> Any:
+    if isinstance(value, list):
+        return [_resolve_serialized_value(entry, field, context, allow_scene_refs) for entry in value]
     if not isinstance(value, dict):
         return value
 
+    if "$assetRef" in value:
+        asset = _resolve_asset_ref(value, context)
+        return _apply_asset_selector(asset, value.get("selector"))
+
+    registry = context.component_registry or ComponentRegistry
+    if _is_inline_asset(value, registry):
+        type_name = value.get("type")
+        asset = (
+            registry.create_asset(str(type_name), value.get("args") or {})
+            if type_name and registry.get_asset(str(type_name))
+            else dict(value)
+        )
+        return _apply_asset_selector(asset, value.get("selector"))
+
+    if "$componentRef" in value:
+        if not allow_scene_refs:
+            raise ValueError("SceneLoader: args nao pode conter ComponentRef")
+        component_id = str(value["$componentRef"])
+        component = (context.components_by_id or {}).get(component_id)
+        if component is None:
+            raise KeyError(f"SceneLoader: componentRef nao encontrado: {component_id}")
+        return component
+
     reference = value.get("$id") or value.get("$ref")
     if reference:
+        if not allow_scene_refs:
+            raise ValueError("SceneLoader: args nao pode conter ItemRef ou ComponentRef")
         item = None
         if context.objects_by_easycells_id:
             item = context.objects_by_easycells_id.get(str(reference))
         if item is None:
             item = context.objects_by_name.get(str(reference))
         if item is None:
-            raise KeyError(f"referencia nao encontrada: {reference}")
+            raise KeyError(f"SceneLoader: referencia nao encontrada: {reference}")
 
         component_type = value.get("$component")
         if component_type:
@@ -433,15 +325,62 @@ def _resolve_serialized_value(value: Any, field, context: ComponentCreationConte
                 return _find_component_on_item(item, str(component_type))
         return item
 
-    return value
+    return {
+        key: _resolve_serialized_value(entry, field, context, allow_scene_refs)
+        for key, entry in value.items()
+    }
+
+
+def _resolve_asset_ref(value: dict[str, Any], context: ComponentCreationContext) -> Any:
+    asset_name = str(value["$assetRef"])
+    if not context.assets or asset_name not in context.assets:
+        raise KeyError(f"SceneLoader: assetRef nao encontrado: {asset_name}")
+    return context.assets[asset_name]
+
+
+def _is_inline_asset(value: dict[str, Any], registry: type[ComponentRegistry]) -> bool:
+    if "$asset" in value:
+        return True
+    type_name = value.get("type")
+    return bool(type_name and "args" in value and registry.get_asset(str(type_name)) is not None)
+
+
+def _apply_asset_selector(asset: Any, selector: Any) -> Any:
+    if selector is None:
+        return asset
+    if not isinstance(selector, dict):
+        raise ValueError("SceneLoader: selector deve ser objeto")
+    method_name = selector.get("method")
+    if not method_name:
+        raise ValueError("SceneLoader: selector deve conter 'method'")
+    if not isinstance(asset, Asset):
+        raise TypeError(f"SceneLoader: selector method requer Asset runtime, recebido {type(asset).__name__}")
+
+    method = getattr(asset, str(method_name), None)
+    raw_method = getattr(method, "__func__", method)
+    if method is None or not getattr(raw_method, "__easycells_export__", False):
+        raise KeyError(f"SceneLoader: metodo de asset nao exportado: {method_name}")
+
+    args = selector.get("args") or {}
+    if isinstance(args, dict):
+        return method(**args)
+    if isinstance(args, list):
+        return method(*args)
+    raise ValueError("SceneLoader: selector.args deve ser objeto ou lista")
 
 
 def _find_component_on_item(item: Item, component_type: str):
+    matches = []
     for component in set(item.components.values()):
         cls = component.__class__
         if component_type in {cls.__name__, f"{cls.__module__}.{cls.__name__}"}:
-            return component
-    raise KeyError(f"componente '{component_type}' nao encontrado em '{item.name}'")
+            matches.append(component)
+    if len(matches) != 1:
+        raise KeyError(
+            f"componente '{component_type}' deve existir exatamente uma vez em '{item.name}', "
+            f"encontrados {len(matches)}"
+        )
+    return matches[0]
 
 
 def _coerce_serialized_value(value: Any, field) -> Any:
@@ -468,23 +407,6 @@ def _unique_name(name: str, existing: dict[str, Item]) -> str:
     while f"{name}.{index}" in existing:
         index += 1
     return f"{name}.{index}"
-
-
-def _primitive_count(document: dict[str, Any], mesh_index: int) -> int:
-    meshes = document.get("meshes", [])
-    if mesh_index < 0 or mesh_index >= len(meshes):
-        return 1
-    primitives = meshes[mesh_index].get("primitives") or []
-    return max(1, len(primitives))
-
-
-def _mesh_draw_indices(document: dict[str, Any]) -> dict[int, int]:
-    indices: dict[int, int] = {}
-    next_draw_index = 0
-    for mesh_index, _ in enumerate(document.get("meshes", [])):
-        indices[mesh_index] = next_draw_index
-        next_draw_index += _primitive_count(document, mesh_index)
-    return indices
 
 
 def _find_project_root(scene_path: Path) -> Path:
