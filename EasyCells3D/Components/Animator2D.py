@@ -38,7 +38,7 @@ class Animator2D(Component):
     def current_animation(self, value: str | None):
         if self._current_animation is None and value is not None:
             self._current_animation = value
-            self.game.scheduler.add_dict_generator(self, self.run_animation())
+            self.game.scheduler.create_task(self.run_animation(), key=self)
             return
 
         if self._current_animation == value:
@@ -53,7 +53,8 @@ class Animator2D(Component):
             self.sprite.index_y = self.dict_animations[value].index_y
 
         self.dict_animations[self.current_animation].current_frame = 0
-        self.game.scheduler.change_time_dict_generator(self, 0)
+        self.game.scheduler.cancel(self)
+        self.game.scheduler.create_task(self.run_animation(), key=self)
 
     def __init__(self, dict_animations: dict[str, Animation2D], current_animation: str):
         self.dict_animations: dict[str, Animation2D] = dict_animations
@@ -63,14 +64,14 @@ class Animator2D(Component):
 
     def init(self):
         self.sprite = self.GetComponent(Sprite)
-        self.game.scheduler.add_dict_generator(self, self.run_animation())
+        self.game.scheduler.create_task(self.run_animation(), key=self)
 
-    def run_animation(self):
+    async def run_animation(self):
         while True:
             animation = self.dict_animations[self.current_animation]
             next_index = animation.next_frame()
             self.sprite.index_x = next_index if next_index is not None else self.sprite.index_x
-            yield animation.speed
+            await self.game.scheduler.sleep(animation.speed)
 
     def stop_animation(self):
-        self.game.scheduler.remove_dict_generator(self)
+        self.game.scheduler.cancel(self)

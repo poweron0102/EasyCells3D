@@ -134,17 +134,17 @@ class Rigidbody(Component):
         This method should be called at the start of your level to initialize the physics system.
         It will ensure that all rigidbodies are updated and collisions are resolved.
         """
-        def physics_loop():
+        async def physics_loop():
             last_time: float = Game.instance.time
-            yield
+            await Game.instance.scheduler.next_frame()
             while True:
                 current_time: float = Game.instance.time
                 delta = (current_time - last_time) / 1000.0
                 Rigidbody.physics_step(delta if delta < 0.02 else 0.02)  # Cap delta time to avoid large jumps
                 last_time = current_time
-                yield  1 / 60
+                await Game.instance.scheduler.sleep(1 / 60)
 
-        Game.instance.scheduler.add_generator(physics_loop(), 0)
+        Game.instance.scheduler.create_task(physics_loop(), key=Rigidbody)
 
     @staticmethod
     def _resolve_collision(rb1: Rigidbody, rb2: Rigidbody, mtv: Vec2):

@@ -6,7 +6,6 @@ from EasyCells3D.EditorComponents.EditorUI import EditorUI
 from EasyCells3D.Game import Game
 
 import Levels.platform
-import Levels.blender_scene
 
 
 running_game: Game
@@ -18,7 +17,7 @@ def init(game: Game):
     camera = game.CreateItem().AddComponent(CameraUI())
 
     render = rl.load_render_texture(800, 600)
-    running_game = Game(Levels.blender_scene, "Platform",  render_target=render)
+    running_game = Game(Levels.platform, "Platform",  render_target=render)
 
     game.CreateItem().AddComponent(EditorUI(running_game))
 

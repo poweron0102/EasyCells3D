@@ -1,8 +1,59 @@
+from __future__ import annotations
+
+import inspect
+import threading
 import traceback
-from typing import Generator, Callable
+from collections import deque
+from dataclasses import dataclass
+from typing import Any, Coroutine, TYPE_CHECKING
 
 from .NewGame import NewGame
-from .Game import Game
+
+if TYPE_CHECKING:
+    from .Game import Game
+
+
+@dataclass
+class _SleepRequest:
+    seconds: float
+
+    def __await__(self):
+        yield self
+
+
+@dataclass
+class _NextFrameRequest:
+    def __await__(self):
+        yield self
+
+
+class SchedulerTask:
+    def __init__(
+            self,
+            coroutine: Coroutine[Any, Any, Any],
+            ready_time: float,
+            ready_frame: int,
+            key: Any = None,
+    ):
+        self.coroutine = coroutine
+        self.ready_time = ready_time
+        self.ready_frame = ready_frame
+        self.key = key
+        self.cancelled = False
+        self.done = False
+
+    def cancel(self):
+        self.cancelled = True
+        self.close()
+
+    def close(self):
+        if self.done:
+            return
+        self.done = True
+        try:
+            self.coroutine.close()
+        except RuntimeError:
+            pass
 
 
 class Scheduler:
@@ -10,152 +61,128 @@ class Scheduler:
 
     def __init__(self, game: Game):
         self.game = game
+        self._tasks: list[SchedulerTask] = []
+        self._tasks_by_key: dict[Any, SchedulerTask] = {}
+        self._pending_tasks: deque[SchedulerTask] = deque()
+        self._lock = threading.RLock()
+        self._frame = 0
 
-        self._generators: list[Generator] = []
-        self._generators_times: list[float] = []
-        self._generators_dict: dict[any, Generator] = {}
-        self._generators_dict_times: dict[any, float] = {}
-
-        self._times: list[float] = []
-        self._functions: list[Callable] = []
-
-        self._times_dict: dict[any, float] = {}
-        self._functions_dict: dict[any, Callable] = {}
-
-        if not Scheduler.instance:
-            Scheduler.instance = self
+        Scheduler.instance = self
 
     def update(self):
-        # functions
-        for index, function in enumerate(self._functions):
-            if self._times[index] < self.game.run_time:
-                try:
-                    function()
-                except (KeyboardInterrupt, SystemExit, NewGame) as e:
-                    raise e
-                except Exception as e:
-                    print(f"Error in {function}:\n    {e}")
-                    traceback.print_exc()
-                try:
-                    self._times.pop(index)
-                    self._functions.pop(index)
-                except IndexError:
-                    pass
+        self._drain_pending_tasks()
+        self._frame += 1
 
-        for key in list(self._times_dict.keys()):
-            if self._times_dict[key] < self.game.run_time:
-                try:
-                    self._functions_dict[key]()
-                except (KeyboardInterrupt, SystemExit, NewGame) as e:
-                    raise e
-                except Exception as e:
-                    print(f"Error in {self._functions_dict[key]}:\n    {e}")
-                    traceback.print_exc()
-                try:
-                    self._times_dict.pop(key)
-                    self._functions_dict.pop(key)
-                except KeyError:
-                    pass
-
-        # generators
-        for index, generator in enumerate(self._generators):
-            if self._generators_times[index] > self.game.run_time:
+        for task in list(self._tasks):
+            if task.cancelled or task.done:
+                self._remove_task(task)
                 continue
+
+            if task.ready_frame > self._frame or task.ready_time > self.game.run_time:
+                continue
+
             try:
-                next_time = next(generator)
-                if next_time:
-                    self._generators_times[index] = self.game.run_time + next_time
+                request = task.coroutine.send(None)
+                self._schedule_next_step(task, request)
             except StopIteration:
-                self._generators.remove(generator)
-                self._generators_times.pop(index)
+                self._remove_task(task)
             except (KeyboardInterrupt, SystemExit, NewGame) as e:
                 raise e
             except Exception as e:
-                print(f"Error in {generator}:\n    {e}")
+                print(f"Error in {task.coroutine}:\n    {e}")
                 traceback.print_exc()
+                self._remove_task(task)
 
-        for key in list(self._generators_dict.keys()):
-            generator = self._generators_dict[key]
-            if self._generators_dict_times[key] > self.game.run_time:
-                continue
-            try:
-                next_time = next(generator)
-                if next_time:
-                    self._generators_dict_times[key] = self.game.run_time + next_time
-            except StopIteration:
-                self._generators_dict.pop(key)
-                self._generators_dict_times.pop(key)
-            except (KeyboardInterrupt, SystemExit, NewGame) as e:
-                raise e
-            except Exception as e:
-                print(f"Error in {generator}:\n    {e}")
-                traceback.print_exc()
+    def create_task(
+            self,
+            coroutine: Coroutine[Any, Any, Any],
+            delay: float = 0,
+            key: Any = None,
+    ) -> SchedulerTask:
+        if not inspect.iscoroutine(coroutine):
+            raise TypeError("Scheduler.create_task expects an async coroutine object")
 
-    def add(self, time: float, function: Callable):
-        self._times.append(self.game.run_time + time)
-        self._functions.append(function)
+        task = SchedulerTask(
+            coroutine=coroutine,
+            ready_time=self.game.run_time + max(delay, 0),
+            ready_frame=self._frame,
+            key=key,
+        )
 
-    def remove(self, function: Callable):
-        index = self._functions.index(function)
-        self._times.pop(index)
-        self._functions.pop(index)
+        with self._lock:
+            if key is not None:
+                self.cancel(key)
+            self._pending_tasks.append(task)
+            if key is not None:
+                self._tasks_by_key[key] = task
 
-    def add_dict(self, key, time: float, function: Callable):
-        self._times_dict[key] = self.game.run_time + time
-        self._functions_dict[key] = function
+        return task
 
-    def remove_dict(self, key):
-        self._times_dict.pop(key)
-        self._functions_dict.pop(key)
+    def cancel(self, task_or_key: SchedulerTask | Any):
+        with self._lock:
+            if isinstance(task_or_key, SchedulerTask):
+                task = task_or_key
+            else:
+                task = self._tasks_by_key.get(task_or_key)
 
-    def add_generator(self, generator: Generator, time: float = 0):
-        self._generators.append(generator)
-        self._generators_times.append(self.game.run_time + time)
+            if task is None:
+                return
 
-    def remove_generator(self, generator: Generator):
-        index = self._generators.index(generator)
-        self._generators.pop(index)
-        self._generators_times.pop(index)
+            task.cancel()
+            if task.key is not None and self._tasks_by_key.get(task.key) is task:
+                self._tasks_by_key.pop(task.key, None)
 
-    def add_dict_generator(self, key, generator: Generator, time: float = 0):
-        self._generators_dict[key] = generator
-        self._generators_dict_times[key] = self.game.run_time + time
+    def sleep(self, seconds: float) -> _SleepRequest:
+        return _SleepRequest(max(seconds, 0))
 
-    def remove_dict_generator(self, key):
-        try:
-            self._generators_dict.pop(key)
-            self._generators_dict_times.pop(key)
-        except KeyError:
-            return KeyError
-
-    def change_time_dict_generator(self, key, time: float):
-        self._generators_dict_times[key] = self.game.run_time + time
-
-    def change_time_generator(self, generator: Generator, time: float):
-        index = self._generators.index(generator)
-        self._generators_times[index] = self.game.run_time + time
-
-    def change_time_dict(self, key, time: float):
-        self._times_dict[key] = self.game.run_time + time
-
-    def change_time(self, function: Callable, time: float):
-        index = self._functions.index(function)
-        self._times[index] = self.game.run_time + time
+    def next_frame(self) -> _NextFrameRequest:
+        return _NextFrameRequest()
 
     def clear(self):
-        self._times.clear()
-        self._functions.clear()
-        self._times_dict.clear()
-        self._functions_dict.clear()
-        self._generators.clear()
-        self._generators_times.clear()
-        self._generators_dict.clear()
-        self._generators_dict_times.clear()
+        with self._lock:
+            for task in self._tasks:
+                task.cancel()
+            for task in self._pending_tasks:
+                task.cancel()
+            self._tasks.clear()
+            self._tasks_by_key.clear()
+            self._pending_tasks.clear()
+
+    def _drain_pending_tasks(self):
+        with self._lock:
+            while self._pending_tasks:
+                task = self._pending_tasks.popleft()
+                if not task.cancelled:
+                    self._tasks.append(task)
+
+    def _schedule_next_step(self, task: SchedulerTask, request: Any):
+        if isinstance(request, _SleepRequest):
+            task.ready_time = self.game.run_time + request.seconds
+            task.ready_frame = self._frame
+            return
+
+        if isinstance(request, _NextFrameRequest):
+            task.ready_time = self.game.run_time
+            task.ready_frame = self._frame + 1
+            return
+
+        raise TypeError(
+            "Scheduler tasks can only await scheduler.sleep(...) "
+            "or scheduler.next_frame()"
+        )
+
+    def _remove_task(self, task: SchedulerTask):
+        if task in self._tasks:
+            self._tasks.remove(task)
+        if task.key is not None and self._tasks_by_key.get(task.key) is task:
+            self._tasks_by_key.pop(task.key, None)
+        task.close()
 
 
 class Tick:
     def __init__(self, time: float):
         self.time = time
+        self.next_ready_time = 0
         self.on = True
 
     def turn_off(self):
@@ -163,14 +190,23 @@ class Tick:
 
     def turn_on(self):
         self.on = True
+        self.next_ready_time = Scheduler.instance.game.run_time
 
     def reset(self):
         self.on = False
-        Scheduler.instance.add(self.time, self.turn_on)
+        self.next_ready_time = Scheduler.instance.game.run_time + self.time
 
     def __call__(self) -> bool:
+        scheduler = Scheduler.instance
+        if scheduler is None:
+            return False
+
+        if not self.on and scheduler.game.run_time >= self.next_ready_time:
+            self.on = True
+
         if self.on:
             self.on = False
-            Scheduler.instance.add(self.time, self.turn_on)
+            self.next_ready_time = scheduler.game.run_time + self.time
             return True
+
         return False
