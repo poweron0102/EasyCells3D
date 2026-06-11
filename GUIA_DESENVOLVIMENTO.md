@@ -416,6 +416,18 @@ async def blink():
 game.scheduler.create_task(blink())
 ```
 
+Criar uma task para iniciar depois e aguardar seu retorno:
+
+```python
+async def load_data():
+    await game.scheduler.sleep(0.5)
+    return 42
+
+task = game.scheduler.prepare_task(load_data())
+task.start()
+value = await task
+```
+
 `Tick` e um cooldown simples:
 
 ```python
