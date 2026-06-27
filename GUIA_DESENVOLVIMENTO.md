@@ -25,7 +25,7 @@ Este documento explica as correlacoes com Unity e mostra como desenvolver usando
 | `Rigidbody2D` | `Rigidbody` | Corpo fisico 2D. |
 | `Collider2D` | `Collider`, `RectCollider`, `TileMapCollider` | Colisao 2D por poligonos/SAT. |
 | `Prefab` | funcao factory em `UserComponents/` | Exemplo: `load_player(game, folder_name)`. |
-| `Coroutine` | `Scheduler` com generators | Executa funcoes ou generators depois de intervalos. |
+| `Coroutine` | `Scheduler` async | Executa coroutines async em fatias por frame. |
 | `DontDestroyOnLoad` | `item.destroy_on_load = False` | Mantem o item ao trocar de level. |
 
 ## Estrutura do projeto
@@ -34,7 +34,7 @@ Este documento explica as correlacoes com Unity e mostra como desenvolver usando
 EasyCells3D/
   Game.py                 Runtime principal, janela, troca de level e loop.
   Geometry.py             Vec2, Vec3 e Quaternion.
-  scheduler.py            Timers, generators e Tick.
+  scheduler.py            Coroutines async por frame e Tick.
   Components/             Componentes base, cameras, sprites, tilemaps, 3D.
   PhysicsComponents/      Colliders, Rigidbody e fisica 2D.
   NetworkComponents/      NetworkManager, RPC, NetworkVariable e NetworkTransform.
@@ -393,26 +393,39 @@ Caminhos tambem partem de `Assets/`.
 
 ## Scheduler e Tick
 
-O `Scheduler` funciona como um sistema de timers e coroutines. Ele fica em `game.scheduler`.
+O `Scheduler` executa coroutines async em fatias por frame. Ele fica em `game.scheduler`.
 
-Executar uma funcao depois de um tempo:
+Executar uma coroutine depois de um tempo:
 
 ```python
-def spawn_enemy():
-    pass
+async def spawn_enemy():
+    await game.scheduler.sleep(2.0)
+    create_enemy()
 
-game.scheduler.add(2.0, spawn_enemy)
+game.scheduler.create_task(spawn_enemy())
 ```
 
-Generator repetitivo:
+Coroutine repetitiva:
 
 ```python
-def blink():
+async def blink():
     while True:
         sprite.enable = not sprite.enable
-        yield 0.5
+        await game.scheduler.sleep(0.5)
 
-game.scheduler.add_generator(blink())
+game.scheduler.create_task(blink())
+```
+
+Criar uma task para iniciar depois e aguardar seu retorno:
+
+```python
+async def load_data():
+    await game.scheduler.sleep(0.5)
+    return 42
+
+task = game.scheduler.prepare_task(load_data())
+task.start()
+value = await task
 ```
 
 `Tick` e um cooldown simples:

@@ -5,7 +5,7 @@ import threading
 import select
 import time
 from collections import deque
-from EasyCells.scheduler import Scheduler
+from EasyCells3D.scheduler import Scheduler
 
 
 class NetworkServerUDP:
@@ -65,7 +65,7 @@ class NetworkServerUDP:
                     # Send the client their ID
                     self.send(client_id, client_id)
 
-                    Scheduler.instance.add(0, lambda: self.connect_callback(client_id))
+                    Scheduler.instance.create_task(self._run_connect_callback(client_id))
 
                     # If the packet contains real data (not just a handshake), queue it
                     try:
@@ -89,6 +89,9 @@ class NetworkServerUDP:
             except OSError:
                 # Socket likely closed
                 break
+
+    async def _run_connect_callback(self, client_id: int):
+        self.connect_callback(client_id)
 
     def send(self, data: object, client_id: int):
         if client_id >= len(self.clients) or self.clients[client_id] is None:

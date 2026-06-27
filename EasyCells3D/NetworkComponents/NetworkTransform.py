@@ -43,16 +43,16 @@ class NetworkTransform(NetworkComponent):
 
     def init(self):
         super().init()
-        self.game.scheduler.add_generator(self.sync())
+        self.game.scheduler.create_task(self.sync(), key=self)
 
-    def sync(self):
+    async def sync(self):
         if self.owner == NetworkManager.instance.id:
             while True:
                 data = self.serialize()
                 if data[4:] != self.last_sent[4:]:
                     self.last_sent = data
                     self.sync_transform(data)
-                yield self.sync_frequency
+                await self.game.scheduler.sleep(self.sync_frequency)
 
     @Rpc(send_to=SendTo.NOT_ME, require_owner=True, protocol=Protocol.UDP)
     def sync_transform(self, data: bytes):

@@ -4,8 +4,8 @@ from .Game import Game
 from .SceneLoader import SceneLoader
 from .ComponentRegistry import ComponentCreationContext, ComponentRegistry
 from .Serialization import SerializeField
+from .scheduler import Scheduler, SchedulerTaskCancelled, Tick
 from .Assets import Asset, export
-from .scheduler import Scheduler, Tick
 
 __all__ = [
     "Game",
@@ -18,6 +18,7 @@ __all__ = [
     "Asset",
     "export",
     "Scheduler",
+    "SchedulerTaskCancelled",
     "Tick",
     "Components",
     "UiComponents",

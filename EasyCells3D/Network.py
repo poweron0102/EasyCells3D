@@ -42,7 +42,10 @@ class NetworkServer:
             # Send the client their ID
             self.send(client_id, client_id)
 
-            Scheduler.instance.add(0, lambda: self.connect_callback(client_id))
+            Scheduler.instance.create_task(self._run_connect_callback(client_id))
+
+    async def _run_connect_callback(self, client_id: int):
+        self.connect_callback(client_id)
 
     def send(self, data: object, client_id: int):
         data = pickle.dumps(data)
