@@ -1,0 +1,824 @@
+<title>EasyCells3D — Módulo de Rede</title>
+<meta name="description" content="Como funciona o módulo de network do EasyCells3D: transporte TCP/UDP, RPCs, variáveis sincronizadas e NetworkTransform.">
+
+<style>
+  :root {
+    --paper:   #f3f5f8;
+    --surface: #ffffff;
+    --ink:     #13202f;
+    --slate:   #5b6b7d;
+    --line:    #dde3ea;
+    --line-2:  #c8d2dd;
+    --blue:    #2f63e6;
+    --blue-d:  #1c43a8;
+    --tcp:     #cf7327;  /* confiável, ordenado */
+    --tcp-bg:  #fbf0e5;
+    --udp:     #178f86;  /* rápido, sem garantia */
+    --udp-bg:  #e6f4f2;
+    --mono: "Cascadia Code", "Cascadia Mono", "JetBrains Mono", Consolas, "SF Mono", ui-monospace, monospace;
+    --sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    --maxw: 1180px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 17px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection { background: #cfdcfb; }
+
+  a { color: var(--blue-d); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 2px; }
+
+  code { font-family: var(--mono); font-size: 0.88em; }
+
+  /* ---------- HERO ---------- */
+  .hero {
+    border-bottom: 1px solid var(--line);
+    background:
+      linear-gradient(180deg, #fff, var(--paper)),
+      repeating-linear-gradient(90deg, transparent 0 39px, rgba(47,99,230,.045) 39px 40px);
+    background-blend-mode: normal;
+  }
+  .hero-inner {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 60px 32px 48px;
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--slate);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0 0 26px;
+  }
+  .kicker::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--line-2);
+  }
+  h1 {
+    font-size: clamp(2.4rem, 6vw, 4rem);
+    line-height: 1.04;
+    letter-spacing: -.02em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+    font-weight: 700;
+  }
+  h1 .mono { font-family: var(--mono); font-weight: 600; color: var(--blue-d); }
+  .lede {
+    font-size: 1.22rem;
+    color: #33475c;
+    max-width: 62ch;
+    margin: 0 0 32px;
+  }
+  .chips { display: flex; flex-wrap: wrap; gap: 10px; }
+  .chip {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line-2);
+    background: var(--surface);
+    color: #34495e;
+  }
+  .chip.tcp { color: var(--tcp); border-color: #e6c39e; background: var(--tcp-bg); }
+  .chip.udp { color: var(--udp); border-color: #a8d8d2; background: var(--udp-bg); }
+
+  /* ---------- LAYOUT ---------- */
+  .wrap {
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: 0 32px;
+    display: grid;
+    grid-template-columns: 220px minmax(0, 1fr);
+    gap: 56px;
+    align-items: start;
+  }
+  nav.toc {
+    position: sticky;
+    top: 0;
+    padding: 48px 0;
+    font-size: 14px;
+  }
+  nav.toc h2 {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+    color: var(--slate);
+    margin: 0 0 14px;
+  }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; }
+  nav.toc li { counter-increment: toc; margin: 2px 0; }
+  nav.toc a {
+    display: flex;
+    gap: 10px;
+    padding: 5px 10px;
+    border-radius: 6px;
+    color: #41546a;
+    text-decoration: none;
+    border-left: 2px solid transparent;
+  }
+  nav.toc a::before {
+    content: counter(toc, decimal-leading-zero);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--slate);
+    padding-top: 2px;
+  }
+  nav.toc a:hover { background: #eaeef4; color: var(--ink); }
+
+  main { padding: 48px 0 96px; min-width: 0; }
+
+  section { scroll-margin-top: 24px; margin-bottom: 64px; }
+  section > h2 {
+    font-size: 1.9rem;
+    letter-spacing: -.015em;
+    margin: 0 0 6px;
+    padding-bottom: 14px;
+    border-bottom: 2px solid var(--ink);
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+  }
+  section > h2 .num {
+    font-family: var(--mono);
+    font-size: 1rem;
+    color: var(--blue-d);
+    font-weight: 600;
+  }
+  .sub { color: var(--slate); margin: 18px 0 8px; font-size: .95rem; font-family: var(--mono); letter-spacing: .04em; text-transform: uppercase; }
+  h3 { font-size: 1.18rem; margin: 32px 0 10px; letter-spacing: -.01em; }
+  p { margin: 14px 0; }
+  p, li { max-width: 70ch; }
+  ul { padding-left: 22px; }
+  li { margin: 6px 0; }
+  strong { color: #0c1620; }
+
+  /* ---------- CODE ---------- */
+  pre {
+    background: #0f1b29;
+    color: #d7e2ee;
+    border-radius: 10px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 13.5px;
+    line-height: 1.6;
+    margin: 18px 0;
+    border: 1px solid #1c2c3d;
+  }
+  pre code { font-size: inherit; }
+  .t-kw { color: #7fb0ff; }
+  .t-fn { color: #6fd0c4; }
+  .t-str{ color: #e0a877; }
+  .t-cm { color: #5e7185; font-style: italic; }
+  .t-dec{ color: #d68fd8; }
+  .t-num{ color: #d99ad9; }
+
+  :not(pre) > code {
+    background: #e7ecf2;
+    border: 1px solid var(--line);
+    padding: 1px 6px;
+    border-radius: 5px;
+    color: #1d3450;
+  }
+
+  /* ---------- CARDS ---------- */
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; margin: 22px 0; }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+  }
+  .card.tcp { border-top: 3px solid var(--tcp); }
+  .card.udp { border-top: 3px solid var(--udp); }
+  .card h3 { margin-top: 0; display: flex; align-items: center; gap: 10px; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: .08em;
+    padding: 2px 8px;
+    border-radius: 5px;
+    text-transform: uppercase;
+  }
+  .tag.tcp { background: var(--tcp-bg); color: var(--tcp); }
+  .tag.udp { background: var(--udp-bg); color: var(--udp); }
+
+  /* ---------- API TABLE ---------- */
+  .api-wrap { overflow-x: auto; margin: 20px 0; border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 540px; }
+  th, td { text-align: left; padding: 11px 16px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { background: #eef2f7; font-family: var(--mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--slate); }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { white-space: nowrap; color: var(--blue-d); font-weight: 600; }
+  td:last-child { color: #3a4d61; }
+
+  /* ---------- CALLOUT ---------- */
+  .note {
+    border-left: 3px solid var(--blue);
+    background: #eef3fd;
+    padding: 14px 18px;
+    border-radius: 0 8px 8px 0;
+    margin: 20px 0;
+    font-size: .96rem;
+  }
+  .note.warn { border-color: var(--tcp); background: var(--tcp-bg); }
+  .note .label { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--slate); display: block; margin-bottom: 4px; }
+
+  /* ---------- BYTE DIAGRAM ---------- */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 26px;
+    margin: 22px 0;
+  }
+  .panel-title { font-family: var(--mono); font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--slate); margin: 0 0 18px; }
+  .bytes { display: flex; overflow-x: auto; font-family: var(--mono); font-size: 13px; }
+  .byte-field { flex: 0 0 auto; text-align: center; }
+  .byte-cell {
+    border: 1px solid var(--line-2);
+    padding: 14px 18px;
+    background: #f7f9fc;
+    white-space: nowrap;
+  }
+  .byte-field:not(:last-child) .byte-cell { border-right: none; }
+  .byte-field.hdr .byte-cell { background: var(--tcp-bg); color: var(--tcp); border-color: #e6c39e; }
+  .byte-field.pay .byte-cell { background: #eef3fd; color: var(--blue-d); border-color: #bcd; }
+  .byte-label { font-size: 11px; color: var(--slate); padding-top: 7px; }
+
+  /* ---------- SEQUENCE / FLOW DIAGRAM ---------- */
+  .flow { overflow-x: auto; }
+  .flow-grid {
+    display: grid;
+    gap: 0;
+    min-width: 560px;
+    font-size: 14px;
+  }
+  .lane-head { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 8px; }
+  .lane-head div {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .06em;
+    text-align: center;
+    padding: 8px;
+    background: var(--ink);
+    color: #fff;
+    border-radius: 7px;
+  }
+  .msg {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+    align-items: center;
+    padding: 9px 0;
+    position: relative;
+  }
+  .msg-arrow {
+    grid-column: var(--col);
+    font-family: var(--mono);
+    font-size: 12.5px;
+    color: #2c3e51;
+    background: #f7f9fc;
+    border: 1px solid var(--line-2);
+    border-radius: 6px;
+    padding: 7px 10px;
+    text-align: center;
+  }
+  .msg-arrow.tcp { border-color: #e6c39e; background: var(--tcp-bg); color: var(--tcp); }
+  .msg-arrow.udp { border-color: #a8d8d2; background: var(--udp-bg); color: var(--udp); }
+  .msg-arrow b { font-weight: 600; }
+  .step-n { font-family: var(--mono); color: var(--slate); font-size: 11px; }
+
+  /* ---------- LAYER STACK ---------- */
+  .stack { display: flex; flex-direction: column; gap: 8px; margin: 22px 0; }
+  .layer {
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 16px 20px;
+    background: var(--surface);
+    display: grid;
+    grid-template-columns: 38px 1fr;
+    gap: 16px;
+    align-items: center;
+  }
+  .layer .lv { font-family: var(--mono); font-size: 12px; color: #fff; background: var(--blue); border-radius: 6px; text-align: center; padding: 7px 0; font-weight: 600; }
+  .layer h4 { margin: 0 0 2px; font-size: 1.02rem; }
+  .layer h4 code { background: none; border: none; padding: 0; color: var(--blue-d); }
+  .layer p { margin: 0; font-size: .9rem; color: var(--slate); max-width: none; }
+  .layer.l1 .lv { background: #6f7e8f; }
+  .layer.l2 .lv { background: var(--blue); }
+  .layer.l3 .lv { background: var(--blue-d); }
+  .layer.l4 .lv { background: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .footer-inner { max-width: var(--maxw); margin: 0 auto; padding: 28px 32px; color: var(--slate); font-size: 13.5px; font-family: var(--mono); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; gap: 0; }
+    nav.toc { display: none; }
+    .hero-inner, main { padding-left: 0; padding-right: 0; }
+    body { font-size: 16px; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    html { scroll-behavior: smooth; }
+  }
+</style>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="kicker">EasyCells3D · Engine Reference</p>
+    <h1>O módulo de <span class="mono">network</span></h1>
+    <p class="lede">
+      Uma camada de multiplayer com servidor autoritativo construída sobre sockets crus.
+      Você marca métodos com <code>@Rpc</code>, declara <code>NetworkVariable</code>s e adiciona
+      um <code>NetworkTransform</code> — o engine cuida de framing, roteamento e sincronização
+      sobre <strong>TCP e UDP simultaneamente</strong>.
+    </p>
+    <div class="chips">
+      <span class="chip">servidor autoritativo</span>
+      <span class="chip">RPCs por decorator</span>
+      <span class="chip">variáveis sincronizadas</span>
+      <span class="chip tcp">TCP · confiável</span>
+      <span class="chip udp">UDP · rápido</span>
+      <span class="chip">pickle</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" aria-label="Índice">
+    <h2>Índice</h2>
+    <ol>
+      <li><a href="#visao">Visão geral</a></li>
+      <li><a href="#camadas">As 4 camadas</a></li>
+      <li><a href="#transporte">Transporte TCP/UDP</a></li>
+      <li><a href="#manager">NetworkManager</a></li>
+      <li><a href="#pacote">Formato do pacote</a></li>
+      <li><a href="#rpc">Sistema de RPC</a></li>
+      <li><a href="#variaveis">NetworkVariable</a></li>
+      <li><a href="#transform">NetworkTransform</a></li>
+      <li><a href="#notas">Notas &amp; armadilhas</a></li>
+    </ol>
+  </nav>
+
+  <main>
+
+    <!-- 1 -->
+    <section id="visao">
+      <h2><span class="num">01</span> Visão geral</h2>
+      <p>
+        O módulo de rede dá ao EasyCells3D um modelo <strong>cliente–servidor autoritativo</strong>:
+        existe um servidor que detém a verdade sobre o jogo e N clientes que enviam intenções e
+        recebem o estado de volta. Toda a comunicação é encapsulada de modo que, no código de jogo,
+        você quase nunca lida com sockets — você lida com três abstrações de alto nível:
+      </p>
+      <div class="grid-2">
+        <div class="card">
+          <h3>🛰️ RPC</h3>
+          <p>Chamar um método decorado com <code>@Rpc</code> executa esse método <em>nas outras máquinas</em> em vez de localmente. Ideal para eventos: "atirar", "pulou", "spawnou".</p>
+        </div>
+        <div class="card">
+          <h3>📦 NetworkVariable</h3>
+          <p>Um valor cujo <code>.value</code> é replicado automaticamente. Atribuir no dono propaga para todos; quem entra depois pede o estado atual via TCP.</p>
+        </div>
+        <div class="card">
+          <h3>🧭 NetworkTransform</h3>
+          <p>Componente pronto que sincroniza posição, rotação e escala de um objeto pela rede, com filtro por eixo e supressão de pacotes redundantes.</p>
+        </div>
+      </div>
+      <p>
+        Os arquivos centrais são
+        <a href="EasyCells3D/NetworkTCP.py">NetworkTCP.py</a>,
+        <a href="EasyCells3D/NetworkUDP.py">NetworkUDP.py</a> e o pacote
+        <a href="EasyCells3D/NetworkComponents/">NetworkComponents/</a> — que expõe publicamente
+        <code>NetworkManager</code>, <code>NetworkComponent</code>, <code>NetworkVariable</code>,
+        <code>NetworkTransform</code>, <code>Rpc</code>, <code>SendTo</code> e <code>Protocol</code>.
+      </p>
+    </section>
+
+    <!-- 2 -->
+    <section id="camadas">
+      <h2><span class="num">02</span> As 4 camadas</h2>
+      <p>
+        O módulo é estritamente estratificado. Cada camada só conhece a de baixo, o que mantém a
+        complexidade de sockets isolada do código de jogo.
+      </p>
+      <div class="stack">
+        <div class="layer l4">
+          <span class="lv">L4</span>
+          <div>
+            <h4><code>NetworkTransform</code> &amp; seus componentes</h4>
+            <p>Componentes de gameplay prontos. Usam RPCs e variáveis sem nunca tocar em sockets.</p>
+          </div>
+        </div>
+        <div class="layer l3">
+          <span class="lv">L3</span>
+          <div>
+            <h4><code>@Rpc</code> · <code>NetworkComponent</code> · <code>NetworkVariable</code></h4>
+            <p>Modelo de replicação: decorators, autoridade por dono, registro de objetos por <code>identifier</code>, relay do servidor.</p>
+          </div>
+        </div>
+        <div class="layer l2">
+          <span class="lv">L2</span>
+          <div>
+            <h4><code>NetworkManager</code></h4>
+            <p>Orquestrador. Abre TCP <em>e</em> UDP, decide para onde cada pacote vai e despacha os recebidos para o objeto certo no <code>loop()</code>.</p>
+          </div>
+        </div>
+        <div class="layer l1">
+          <span class="lv">L1</span>
+          <div>
+            <h4><code>NetworkServerTCP/UDP</code> · <code>NetworkClientTCP/UDP</code></h4>
+            <p>Transporte cru: sockets, threads de aceitação/recepção, framing de bytes e (de)serialização com <code>pickle</code>.</p>
+          </div>
+        </div>
+      </div>
+      <p>
+        O fluxo de uma chamada típica desce da L4 até a L1 no remetente, atravessa a rede, e sobe de
+        volta da L1 até a L4 no destinatário, onde o método/variável correto é finalmente executado.
+      </p>
+    </section>
+
+    <!-- 3 -->
+    <section id="transporte">
+      <h2><span class="num">03</span> Camada de transporte <span style="font-size:1rem;color:var(--slate);font-family:var(--mono)">L1</span></h2>
+      <p>
+        Quatro classes simétricas, uma por (papel × protocolo). Todas falam a mesma interface pública
+        de quatro verbos, então as camadas acima as tratam de forma intercambiável.
+      </p>
+
+      <div class="api-wrap">
+        <table>
+          <thead>
+            <tr><th>Método</th><th>Server</th><th>Client</th><th>O que faz</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>send(data, id)</code> / <code>send(data)</code></td><td>✓</td><td>✓</td><td>Serializa e envia um objeto Python.</td></tr>
+            <tr><td><code>read()</code></td><td>✓</td><td>✓</td><td>Não-bloqueante. Retorna o próximo objeto ou <code>None</code> se nada chegou.</td></tr>
+            <tr><td><code>block_read()</code></td><td>✓</td><td>✓</td><td>Bloqueia até um objeto completo chegar. Usado no handshake.</td></tr>
+            <tr><td><code>broadcast(data)</code></td><td>✓</td><td>—</td><td>Envia para todos os clientes (índices 1…N).</td></tr>
+            <tr><td><code>close()</code> / <code>close_client(id)</code></td><td>✓</td><td>✓</td><td>Encerra conexões; envia a sentinela <code>"close"</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid-2">
+        <div class="card tcp">
+          <h3><span class="tag tcp">TCP</span> Stream confiável</h3>
+          <p>
+            TCP é um fluxo de bytes sem fronteiras de mensagem. Para saber onde uma mensagem termina,
+            o módulo prefixa cada envio com um <strong>cabeçalho de 4 bytes</strong> (<code>SIZE_SIZE</code>)
+            contendo o tamanho do payload em big-endian.
+          </p>
+          <p>
+            A leitura usa <code>recv(..., MSG_PEEK)</code> para <em>espiar</em> o buffer sem consumi-lo:
+            se a mensagem inteira ainda não chegou, retorna <code>None</code> e tenta de novo no próximo frame —
+            nunca trava o game loop.
+          </p>
+        </div>
+        <div class="card udp">
+          <h3><span class="tag udp">UDP</span> Datagrama rápido</h3>
+          <p>
+            UDP preserva fronteiras de pacote, então <strong>não há cabeçalho de tamanho</strong> — um
+            <code>recvfrom(65535)</code> entrega uma mensagem inteira. Em troca, não há garantia de entrega nem de ordem.
+          </p>
+          <p>
+            Como UDP não tem "conexão", o servidor roda uma <strong>thread de recepção</strong> que lê todos
+            os datagramas, identifica o cliente por <code>(ip, port)</code> e enfileira em um
+            <code>deque</code> por cliente. O cliente se registra enviando um <code>"HANDSHAKE"</code> inicial.
+          </p>
+        </div>
+      </div>
+
+      <div class="panel">
+        <p class="panel-title">Quadro de uma mensagem TCP</p>
+        <div class="bytes" role="img" aria-label="4 bytes de tamanho seguidos do payload pickle">
+          <div class="byte-field hdr">
+            <div class="byte-cell">size&nbsp;(big-endian)</div>
+            <div class="byte-label">4 bytes · SIZE_SIZE</div>
+          </div>
+          <div class="byte-field pay">
+            <div class="byte-cell">pickle.dumps(objeto)&nbsp;…&nbsp;→</div>
+            <div class="byte-label">N bytes · payload</div>
+          </div>
+        </div>
+      </div>
+
+      <p class="sub">Implementação interna — leitura não-bloqueante (TCP)</p>
+<pre><code><span class="t-kw">def</span> <span class="t-fn">read</span>(self, client_id):
+    s = self.clients[client_id]
+    ready, _, _ = select.<span class="t-fn">select</span>([s], [], [], <span class="t-num">0</span>)   <span class="t-cm"># há algo para ler?</span>
+    <span class="t-kw">if not</span> ready:
+        <span class="t-kw">return</span> <span class="t-kw">None</span>
+    head = s.<span class="t-fn">recv</span>(SIZE_SIZE, socket.MSG_PEEK)        <span class="t-cm"># espia sem consumir</span>
+    <span class="t-kw">if</span> <span class="t-fn">len</span>(head) &lt; SIZE_SIZE:
+        <span class="t-kw">return</span> <span class="t-kw">None</span>                              <span class="t-cm"># cabeçalho incompleto</span>
+    size = <span class="t-fn">int</span>.<span class="t-fn">from_bytes</span>(head, <span class="t-str">"big"</span>)
+    <span class="t-kw">if</span> <span class="t-fn">len</span>(s.<span class="t-fn">recv</span>(size + SIZE_SIZE, socket.MSG_PEEK)) &lt; size + SIZE_SIZE:
+        <span class="t-kw">return</span> <span class="t-kw">None</span>                              <span class="t-cm"># payload ainda chegando</span>
+    s.<span class="t-fn">recv</span>(SIZE_SIZE)                              <span class="t-cm"># consome o header</span>
+    <span class="t-kw">return</span> pickle.<span class="t-fn">loads</span>(s.<span class="t-fn">recv</span>(size))           <span class="t-cm"># consome e devolve o objeto</span></code></pre>
+
+      <div class="note">
+        <span class="label">Convenção de IDs</span>
+        A lista <code>clients</code> começa em <code>[None]</code>, então o índice <strong>0 nunca é um cliente</strong> —
+        ele representa o servidor. Os clientes reais ocupam os índices 1, 2, 3… e cada um recebe seu próprio
+        ID assim que conecta (o servidor envia o número de volta no handshake).
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section id="manager">
+      <h2><span class="num">04</span> <code style="font-size:1.4rem">NetworkManager</code> <span style="font-size:1rem;color:var(--slate);font-family:var(--mono)">L2</span></h2>
+      <p>
+        É um <code>Component</code> do engine e um singleton (<code>NetworkManager.instance</code>). Ele é a
+        ponte entre o transporte e o modelo de replicação. Construir um já abre a rede:
+      </p>
+<pre><code><span class="t-cm"># No servidor</span>
+item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</span>(ip=<span class="t-str">"0.0.0.0"</span>, port=<span class="t-num">25765</span>, is_server=<span class="t-kw">True</span>))
+
+<span class="t-cm"># No cliente — dispara connect_callback quando o TCP conecta</span>
+item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</span>(ip=<span class="t-str">"meu.servidor"</span>, port=<span class="t-num">25765</span>, is_server=<span class="t-kw">False</span>,
+                              connect_callback=<span class="t-kw">lambda</span> meu_id: <span class="t-fn">print</span>(<span class="t-str">"entrei!"</span>, meu_id)))</code></pre>
+
+      <p>
+        Note que ele instancia <strong>os dois protocolos de uma vez</strong>: no servidor cria
+        <code>tcp_server</code> + <code>udp_server</code>; no cliente, <code>tcp_client</code> + <code>udp_client</code> —
+        ambos na <em>mesma</em> porta. O TCP é a conexão "mestre": é ele quem define o
+        <code>id</code> do cliente e dispara o <code>connect_callback</code> do usuário.
+      </p>
+
+      <p class="sub">Interface pública de envio</p>
+      <div class="api-wrap">
+        <table>
+          <thead><tr><th>Método</th><th>Descrição</th></tr></thead>
+          <tbody>
+            <tr><td><code>send_to_server(packet, protocol)</code></td><td>Cliente → servidor, no protocolo escolhido.</td></tr>
+            <tr><td><code>send_to_client(packet, id, protocol)</code></td><td>Servidor → um cliente específico.</td></tr>
+            <tr><td><code>broadcast(packet, protocol)</code></td><td>Servidor → todos os clientes.</td></tr>
+            <tr><td><code>call_rpc_on_client(id, metodo, *args)</code></td><td>Servidor invoca um RPC num cliente; detecta o protocolo pela config do método.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Os três primeiros recebem um <code>Protocol</code> explícito e roteiam para
+        <code>tcp_*</code> ou <code>udp_*</code>. As camadas acima sempre falam com o Manager —
+        nunca diretamente com os sockets.
+      </p>
+
+      <p class="sub">O coração: <code>loop()</code> e <code>process_packet()</code></p>
+      <p>
+        Como <code>Component</code>, o Manager tem seu <code>loop()</code> chamado todo frame. Ele drena
+        <strong>ambos</strong> os transportes (TCP e UDP) de todos os clientes e entrega cada pacote ao
+        <code>process_packet</code>, que faz o despacho final:
+      </p>
+<pre><code><span class="t-kw">def</span> <span class="t-fn">process_packet</span>(data, sender_id):
+    op_code, target_id, payload, args = data
+    <span class="t-kw">if</span> op_code == OP_RPC:
+        comp = NetworkComponent._active_components.<span class="t-fn">get</span>(target_id)
+        <span class="t-kw">if</span> comp: comp.<span class="t-fn">handle_incoming_rpc</span>(payload, args, sender_id)
+    <span class="t-kw">elif</span> op_code == OP_VAR:
+        var = NetworkVariable._active_variables.<span class="t-fn">get</span>(target_id)
+        <span class="t-kw">if</span> var: var.<span class="t-fn">handle_network_update</span>(payload, args, sender_id)</code></pre>
+      <p>
+        Repare no padrão de registro: objetos de rede se cadastram em dicionários estáticos
+        (<code>_active_components</code>, <code>_active_variables</code>) indexados por <code>identifier</code>.
+        O pacote carrega esse ID, e o Manager usa ele para reencontrar o objeto-alvo do outro lado da rede.
+      </p>
+    </section>
+
+    <!-- 5 -->
+    <section id="pacote">
+      <h2><span class="num">05</span> Formato do pacote</h2>
+      <p>
+        Acima do transporte, tudo trafega como uma <strong>tupla de 4 elementos</strong>. É o "envelope"
+        comum a RPCs e variáveis:
+      </p>
+      <div class="panel">
+        <p class="panel-title">( op_code , target_id , payload , args )</p>
+        <div class="api-wrap" style="border:none;margin:0">
+          <table>
+            <tbody>
+              <tr><td><code>op_code</code></td><td><code>OP_RPC&nbsp;=&nbsp;1</code> ou <code>OP_VAR&nbsp;=&nbsp;2</code> — diz ao receptor qual subsistema trata o pacote.</td></tr>
+              <tr><td><code>target_id</code></td><td>O <code>identifier</code> do objeto destino. <code>0</code> (<code>STATIC_NET_ID</code>) = RPC estático/global.</td></tr>
+              <tr><td><code>payload</code></td><td>Nome do método (RPC) ou a sub-operação <code>VAR_SET</code>/<code>VAR_GET</code> (variável).</td></tr>
+              <tr><td><code>args</code></td><td>Tupla de argumentos, serializada junto pelo <code>pickle</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p>
+        Essa uniformidade é o que permite ao <code>process_packet</code> ser tão curto: ele lê o
+        <code>op_code</code>, encontra o objeto pelo <code>target_id</code> e delega o resto.
+      </p>
+    </section>
+
+    <!-- 6 -->
+    <section id="rpc">
+      <h2><span class="num">06</span> Sistema de RPC <span style="font-size:1rem;color:var(--slate);font-family:var(--mono)">L3</span></h2>
+      <p>
+        Um <strong>Remote Procedure Call</strong> é um método que, quando chamado localmente, na verdade
+        executa nas <em>outras</em> máquinas. A mágica está no decorator <code>@Rpc</code>, que envolve o
+        método: na primeira chamada ele <em>não</em> roda o corpo — ele empacota a chamada e a envia pela rede.
+        Quando o pacote chega do outro lado, o módulo marca <code>_is_executing_rpc = True</code> e aí sim
+        executa o corpo de verdade.
+      </p>
+<pre><code><span class="t-kw">class</span> <span class="t-fn">Player</span>(NetworkComponent):
+
+    <span class="t-dec">@Rpc</span>(send_to=SendTo.ALL, require_owner=<span class="t-kw">True</span>, protocol=Protocol.TCP)
+    <span class="t-kw">def</span> <span class="t-fn">disparar</span>(self, direcao):
+        <span class="t-fn">spawn_projetil</span>(direcao)        <span class="t-cm"># roda em todos os peers</span>
+
+<span class="t-cm"># Em qualquer lugar do gameplay:</span>
+player.<span class="t-fn">disparar</span>(Vec3(<span class="t-num">0</span>, <span class="t-num">0</span>, -<span class="t-num">1</span>))      <span class="t-cm"># vira um pacote na rede, não roda local*</span></code></pre>
+
+      <p class="sub">Os três parâmetros</p>
+      <div class="grid-2">
+        <div class="card">
+          <h3><code>send_to</code></h3>
+          <p>Um <code>SendTo</code> que define o alcance: <code>ALL</code>, <code>SERVER</code>, <code>CLIENTS</code>, <code>OWNER</code> ou <code>NOT_ME</code> (todos menos quem enviou — clássico para sincronizar movimento).</p>
+        </div>
+        <div class="card">
+          <h3><code>require_owner</code></h3>
+          <p>Se <code>True</code>, o servidor <strong>rejeita</strong> o RPC caso o remetente não seja o <code>owner</code> do objeto. É a checagem de autoridade — impede um cliente de comandar o personagem de outro.</p>
+        </div>
+        <div class="card">
+          <h3><code>protocol</code></h3>
+          <p><code>Protocol.TCP</code> (padrão, confiável) ou <code>Protocol.UDP</code> (rápido, para eventos frequentes e descartáveis como sincronizar transform).</p>
+        </div>
+      </div>
+
+      <p class="sub">Servidor como relay</p>
+      <p>
+        Num modelo autoritativo os clientes não falam entre si. Quando o servidor recebe um RPC, ele
+        primeiro <strong>valida a autoridade</strong>, executa localmente se preciso, e então
+        <strong>retransmite</strong> (relay) para os outros clientes respeitando o <code>send_to</code> e o
+        <code>protocol</code> originais. Veja o caminho de um RPC <code>NOT_ME</code> disparado por um cliente:
+      </p>
+
+      <div class="panel flow">
+        <p class="panel-title">Fluxo de um RPC · send_to = NOT_ME</p>
+        <div class="flow-grid">
+          <div class="lane-head">
+            <div>Cliente 1 (dono)</div>
+            <div>Servidor</div>
+            <div>Cliente 2</div>
+          </div>
+          <div class="msg">
+            <div class="msg-arrow tcp" style="--col:1 / 3"><span class="step-n">01 →</span> <b>send_rpc</b> (OP_RPC, id, "disparar", args)</div>
+          </div>
+          <div class="msg">
+            <div class="msg-arrow" style="--col:2 / 3"><span class="step-n">02</span> valida owner · executa local</div>
+          </div>
+          <div class="msg">
+            <div class="msg-arrow tcp" style="--col:2 / 4"><span class="step-n">03 →</span> <b>relay</b> para todos menos o sender</div>
+          </div>
+          <div class="msg">
+            <div class="msg-arrow" style="--col:3 / 4"><span class="step-n">04</span> handle_incoming_rpc → executa</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note">
+        <span class="label">* exceção importante</span>
+        Se você é o <strong>servidor</strong> e o <code>send_to</code> é <code>ALL</code>, o corpo do método
+        roda imediatamente na sua máquina <em>além</em> de ser enviado — afinal o servidor também participa do
+        "todos". Em qualquer outro caso, a chamada local apenas envia o pacote.
+      </div>
+
+      <p class="sub">RPCs estáticos</p>
+      <p>
+        Funções livres e <code>@staticmethod</code> decoradas com <code>@Rpc</code> também funcionam: elas usam
+        a instância especial de <code>identifier = 0</code> (<code>STATIC_NET_ID</code>) e são registradas em
+        <code>NetworkComponent._static_rpcs</code> pelo nome. Servem para eventos globais que não pertencem a
+        nenhum objeto específico (ex.: "iniciar partida").
+      </p>
+    </section>
+
+    <!-- 7 -->
+    <section id="variaveis">
+      <h2><span class="num">07</span> <code style="font-size:1.4rem">NetworkVariable[T]</code></h2>
+      <p>
+        Onde RPCs sincronizam <em>eventos</em>, <code>NetworkVariable</code> sincroniza <em>estado contínuo</em>:
+        vida, pontuação, nome do jogador. É genérica e expõe uma única propriedade pública, <code>.value</code>.
+        Ler é local; <strong>escrever propaga</strong>.
+      </p>
+<pre><code>vida = <span class="t-fn">NetworkVariable</span>(<span class="t-num">100</span>, identifier=<span class="t-num">42</span>, owner=meu_id)
+
+vida.value -= <span class="t-num">10</span>     <span class="t-cm"># o setter envia OP_VAR/VAR_SET pela rede (sempre TCP)</span>
+<span class="t-fn">print</span>(vida.value)   <span class="t-cm"># leitura puramente local</span></code></pre>
+      <p>
+        Variáveis usam <strong>sempre TCP</strong> — perder uma atualização de estado é inaceitável.
+        A lógica de autoridade é a mesma dos RPCs: com <code>require_owner=True</code>, o servidor descarta
+        um <code>VAR_SET</code> vindo de quem não é dono, e então faz relay do valor aceito para os demais.
+      </p>
+      <p class="sub">Late-join: a sub-operação VAR_GET</p>
+      <p>
+        Quando um cliente cria uma <code>NetworkVariable</code> que já existe no servidor, ele não conhece o
+        valor atual. Por isso, no construtor, o cliente dispara um <code>VAR_GET</code>; o servidor responde com
+        um <code>VAR_SET</code> direcionado só a ele, contendo o valor corrente. Assim quem entra no meio da
+        partida recebe o estado certo.
+      </p>
+      <div class="note">
+        <span class="label">Detalhe de implementação</span>
+        O registro <code>_active_variables</code> é um <code>WeakValueDictionary</code>: se a variável for
+        coletada pelo garbage collector, ela some do registro automaticamente, sem vazar entradas mortas.
+      </div>
+    </section>
+
+    <!-- 8 -->
+    <section id="transform">
+      <h2><span class="num">08</span> <code style="font-size:1.4rem">NetworkTransform</code> <span style="font-size:1rem;color:var(--slate);font-family:var(--mono)">L4</span></h2>
+      <p>
+        O melhor exemplo de tudo junto. É um <code>NetworkComponent</code> que mantém posição, rotação e
+        escala de um objeto iguais em todos os peers. Você escolhe quais eixos sincronizar e a frequência:
+      </p>
+<pre><code>item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkTransform</span>(identifier=<span class="t-num">7</span>, owner=meu_id,
+                                 sync_frequency=<span class="t-num">0.015</span>,   <span class="t-cm"># ~66 Hz</span>
+                                 sync_scale_x=<span class="t-kw">False</span>))     <span class="t-cm"># ignora escala em X</span></code></pre>
+
+      <p class="sub">Como funciona por dentro</p>
+      <ul>
+        <li><strong>Só o dono envia.</strong> No <code>init</code> ele agenda uma task no <code>scheduler</code>; o loop de sync só roda se <code>self.owner == NetworkManager.instance.id</code>.</li>
+        <li><strong>Serialização binária compacta.</strong> Em vez de pickle genérico, usa <code>struct.pack</code> para empacotar só os <code>float</code>s dos eixos habilitados — bem mais enxuto.</li>
+        <li><strong>Supressão de redundância.</strong> A cada tick compara o pacote novo com <code>last_sent</code>; se nada mudou (ignorando o contador), não envia. Objeto parado não gera tráfego.</li>
+        <li><strong>Transmite por UDP.</strong> O método de aplicação é <code>@Rpc(send_to=NOT_ME, protocol=UDP)</code> — perdeu um frame de posição? O próximo corrige. Velocidade &gt; confiabilidade aqui.</li>
+        <li><strong>Contador de sequência.</strong> Cada pacote leva um inteiro <code>cont</code>. Na recepção, se <code>cont &lt; self.cont</code> o pacote é <strong>descartado</strong> — é assim que se rejeita um datagrama UDP que chegou fora de ordem.</li>
+      </ul>
+
+<pre><code><span class="t-kw">async def</span> <span class="t-fn">sync</span>(self):
+    <span class="t-kw">if</span> self.owner == NetworkManager.instance.id:   <span class="t-cm"># só o dono emite</span>
+        <span class="t-kw">while</span> <span class="t-kw">True</span>:
+            data = self.<span class="t-fn">serialize</span>()
+            <span class="t-kw">if</span> data[<span class="t-num">4</span>:] != self.last_sent[<span class="t-num">4</span>:]:   <span class="t-cm"># mudou? (ignora o contador)</span>
+                self.last_sent = data
+                self.<span class="t-fn">sync_transform</span>(data)         <span class="t-cm"># RPC UDP → demais peers</span>
+            <span class="t-kw">await</span> self.game.scheduler.<span class="t-fn">sleep</span>(self.sync_frequency)
+
+<span class="t-dec">@Rpc</span>(send_to=SendTo.NOT_ME, require_owner=<span class="t-kw">True</span>, protocol=Protocol.UDP)
+<span class="t-kw">def</span> <span class="t-fn">sync_transform</span>(self, data):
+    self.<span class="t-fn">deserialize</span>(data)                     <span class="t-cm"># aplica nos outros (com checagem de cont)</span></code></pre>
+      <p>
+        Esse componente demonstra a regra geral do módulo: <strong>estado discreto e crítico → TCP +
+        NetworkVariable</strong>; <strong>estado contínuo e tolerante a perda → UDP + RPC com contador
+        de sequência</strong>.
+      </p>
+    </section>
+
+    <!-- 9 -->
+    <section id="notas">
+      <h2><span class="num">09</span> Notas &amp; armadilhas</h2>
+      <div class="note warn">
+        <span class="label">Segurança · pickle</span>
+        Toda a (de)serialização usa <code>pickle</code>, que executa código arbitrário ao desempacotar dados
+        maliciosos. É prático para um jogo entre amigos, mas <strong>nunca exponha o servidor à internet
+        aberta</strong> sem trocar por um formato seguro. Trate todo peer como confiável.
+      </div>
+      <div class="note warn">
+        <span class="label">Pareamento de IDs TCP/UDP</span>
+        TCP e UDP são conexões independentes. O módulo <em>assume</em> que o ID atribuído no UDP coincide com o
+        do TCP porque a ordem de conexão tende a ser a mesma — mas isso é frágil sob concorrência. O TCP é
+        sempre a fonte de verdade do <code>id</code> do cliente.
+      </div>
+      <div class="note">
+        <span class="label">Tamanho do datagrama</span>
+        UDP entrega no máximo ~64&nbsp;KB por pacote e sem fragmentação própria. Pacotes muito grandes (um
+        <code>NetworkTransform</code> com muitos eixos cabe folgado, mas dados arbitrários não) devem ir por TCP.
+      </div>
+      <div class="note">
+        <span class="label">Threads</span>
+        Aceitação de clientes (TCP) e recepção (UDP) rodam em threads <em>daemon</em> — encerram junto com o
+        programa. O processamento dos pacotes, porém, acontece no <code>loop()</code> do game thread, então o
+        seu código de jogo nunca corre risco de concorrência ao reagir a um RPC.
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer>
+  <div class="footer-inner">
+    <span>EasyCells3D · módulo network</span>
+    <span>NetworkTCP.py · NetworkUDP.py · NetworkComponents/</span>
+  </div>
+</footer>
