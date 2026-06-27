@@ -20,8 +20,4 @@ __all__ = [
     "Scheduler",
     "SchedulerTaskCancelled",
     "Tick",
-    "Components",
-    "UiComponents",
-    "PhysicsComponents",
-    "NetworkComponents",
 ]
