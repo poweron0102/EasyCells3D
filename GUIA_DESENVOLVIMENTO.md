@@ -327,9 +327,9 @@ floor.AddComponent(Rigidbody(is_kinematic=True, use_gravity=False))
 No `init()` do level, inicie a simulacao:
 
 ```python
-from EasyCells3D.PhysicsComponents import Rigidbody
+from EasyCells3D.PhysicsComponents import SATPhysicsWorld
 
-Rigidbody.start_physics()
+game.physics_world = SATPhysicsWorld()
 ```
 
 Movimento por fisica:
@@ -348,7 +348,7 @@ Colliders usam `mask` para filtrar consultas. Um raycast estatico recebe uma mas
 from EasyCells3D.PhysicsComponents import Collider
 from EasyCells3D import Vec2
 
-hit = Collider.ray_cast_static(
+hit = game.physics_world.ray_cast(
     origin=player.transform.positionVec2,
     direction=Vec2(0, 1),
     max_distance=20,
@@ -359,7 +359,7 @@ if hit:
     collider, point, normal = hit
 ```
 
-Tambem existe `rect_cast_static()` para varrer um retangulo.
+Use `game.physics_world.rect_cast(...)` para varrer um retangulo.
 
 ## Renderizacao 3D
 
@@ -538,7 +538,7 @@ def load_enemy(game: Game, x: float, y: float):
 
 - Crie camera antes dos renderizaveis, para `Sprite`, `TileMapRenderer`, `Sphere` e modelos entrarem na camera principal correta.
 - Sempre adicione collider antes ou junto do `Rigidbody`.
-- Chame `Rigidbody.start_physics()` uma vez no `init()` do level que usa fisica.
+- Defina `game.physics_world = SATPhysicsWorld()` no `init()` do level que usa fisica 2D.
 - Use `game.delta_time` para movimento por frame.
 - Use `Transform.positionVec2` quando estiver trabalhando em 2D.
 - Use `Vec2`, `Vec3` e `Quaternion` da lib para evitar misturar tuplas e tipos do Raylib.

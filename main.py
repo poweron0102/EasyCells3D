@@ -17,5 +17,5 @@ import Levels.physics3d_demo
 
 if __name__ == '__main__':
     #GAME = Game(Levels.space_selector, "Spaceship", True, (1280, 720))
-    GAME = Game(Levels.physics3d_demo, "physics3d_demo", True, (1280, 720), True)
+    GAME = Game(Levels.platform, "physics3d_demo", True, (1280, 720), True)
     GAME.run()

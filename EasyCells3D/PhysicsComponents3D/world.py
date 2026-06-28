@@ -20,7 +20,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..Geometry import Vec3
 
@@ -46,7 +46,7 @@ class BodyType(IntEnum):
 class RaycastHit:
     """Resultado de um :meth:`PhysicsWorld.raycast`."""
 
-    body: "PhysicsBody3D | None"
+    body: Any | None
     point: Vec3
     normal: Vec3
     distance: float
@@ -60,11 +60,11 @@ class PhysicsWorld(ABC):
         ...
 
     @abstractmethod
-    def add_body(self, body: "PhysicsBody3D") -> None:
+    def add_body(self, body: Any) -> None:
         ...
 
     @abstractmethod
-    def remove_body(self, body: "PhysicsBody3D") -> None:
+    def remove_body(self, body: Any) -> None:
         ...
 
     @abstractmethod
@@ -74,7 +74,7 @@ class PhysicsWorld(ABC):
 
     @abstractmethod
     def overlap_sphere(self, center: Vec3, radius: float,
-                       mask: int = -1) -> "list[PhysicsBody3D]":
+                       mask: int = -1) -> list[Any]:
         ...
 
     @abstractmethod

@@ -347,9 +347,11 @@ Os colisores são poligonais e usam o **Teorema dos Eixos Separadores (SAT)**. O
 ```python
 import pyray as rl
 from EasyCells3D.Geometry import Vec2
-from EasyCells3D.PhysicsComponents import Rigidbody, RectCollider
+from EasyCells3D.PhysicsComponents import Rigidbody, RectCollider, SATPhysicsWorld
 
 def init(game):
+    game.physics_world = SATPhysicsWorld()
+
     # Corpo dinâmico
     caixa = game.CreateItem()
     caixa.AddComponent(RectCollider(rl.Rectangle(0, 0, 32, 32), debug=True, mask=1))
@@ -361,7 +363,6 @@ def init(game):
     chao.AddComponent(Rigidbody(is_kinematic=True, use_gravity=False))
 
     # IMPORTANTE: inicie a simulação depois de criar os corpos
-    Rigidbody.start_physics()
 ```
 
 Aplicando forças (dentro de um componente ou no `loop` da cena):
@@ -372,16 +373,16 @@ rb.add_force(Vec2(100, 0))       # força contínua
 rb.add_impulse(Vec2(0, -200))    # impulso instantâneo (ex.: pulo)
 ```
 
-`Rigidbody(...)` aceita: `mass`, `use_gravity`, `is_kinematic`, `drag`, `angular_drag`, `gravity_scale`, `restitution`. A gravidade global é `Rigidbody.Gravity` (padrão `Vec2(0, 980)`).
+`Rigidbody(...)` aceita: `mass`, `use_gravity`, `is_kinematic`, `drag`, `angular_drag`, `gravity_scale`, `restitution`. Ajuste a gravidade em `game.physics_world.set_gravity(Vec3(x, y, 0))`.
 
 ### Raycast e box cast
 
 ```python
-from EasyCells3D.PhysicsComponents import Collider
+from EasyCells3D.PhysicsComponents import SATPhysicsWorld
 from EasyCells3D.Geometry import Vec2
 
 # Raio
-hit = Collider.ray_cast_static(
+hit = game.physics_world.ray_cast(
     origin=Vec2(100, 100),
     direction=Vec2(1, 0).normalize(),
     max_distance=50,
@@ -391,7 +392,7 @@ if hit:
     collider, ponto, normal, distancia = hit
 
 # Caixa (rect cast)
-hit = Collider.rect_cast_static(
+hit = game.physics_world.rect_cast(
     origin=Vec2(100, 100),
     size=Vec2(20, 20),
     angle=0,

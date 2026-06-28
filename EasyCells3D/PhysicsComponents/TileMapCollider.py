@@ -1,5 +1,4 @@
 from .Collider import Collider, Polygon
-from ..Components.Component import Transform
 from ..Components.TileMap import TileMap
 
 
@@ -9,7 +8,8 @@ class TileMapCollider(Collider):
         self.solids = solids
         self.tile_size = tile_size
         self.debug = debug
-        Collider.colliders.append(self)
+        self.polygons = []
+        self._world = None
 
     def init(self):
         polygons = []
@@ -61,3 +61,4 @@ class TileMapCollider(Collider):
 
         self.polygons = polygons
         self.compile_numba_functions()
+        self._register_with_world()

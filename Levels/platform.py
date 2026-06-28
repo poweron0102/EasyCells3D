@@ -1,7 +1,7 @@
 from EasyCells3D import Game, Vec2
 from EasyCells3D.Components import Camera2D, Item, TileMapRenderer, TileMap, Animator2D
 from EasyCells3D.Components.TileMap import matrix_from_csv, solids_set_from_tsj
-from EasyCells3D.PhysicsComponents import Rigidbody, TileMapCollider, RectCollider
+from EasyCells3D.PhysicsComponents import Rigidbody, SATPhysicsWorld, TileMapCollider, RectCollider
 from UserComponents.platform.OneWayPlatform import OneWayPlatform
 from UserComponents.platform.Player import load_player
 
@@ -9,6 +9,8 @@ import pyray as rl
 
 
 def init(game: Game):
+    game.physics_world = SATPhysicsWorld()
+
     camera_item = game.CreateItem()
     camera = camera_item.AddComponent(Camera2D())
 
@@ -29,9 +31,6 @@ def init(game: Game):
     plataforma.AddComponent(RectCollider(rl.Rectangle(0, 0, 96, 10), debug=True, mask=1))
     plataforma.AddComponent(Rigidbody(is_kinematic=True, use_gravity=False))
     plataforma.transform.positionVec2 = Vec2(273, 90)
-
-
-    Rigidbody.start_physics()
 
 
 def loop(game: Game):

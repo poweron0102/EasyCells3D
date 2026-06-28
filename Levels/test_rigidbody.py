@@ -3,7 +3,7 @@ import pyray as rl
 from EasyCells3D import Game, Vec2
 from EasyCells3D.Components import Item, Camera2D, Animation2D, Animator2D, Sprite
 from EasyCells3D.Components import TileMap, TileMapRenderer
-from EasyCells3D.PhysicsComponents import Rigidbody, Collider, RectCollider, TileMapCollider
+from EasyCells3D.PhysicsComponents import Rigidbody, Collider, RectCollider, SATPhysicsWorld, TileMapCollider
 
 # --- Global variables for easy access in the loop ---
 player: Item
@@ -18,6 +18,8 @@ tile_map_collider: Collider
 
 def init(game: Game):
     global player, player_rg, caixa, caixa_rg, camera, tile_map, player_collider, tile_map_collider
+
+    game.physics_world = SATPhysicsWorld()
 
     # --- Player Setup ---
     player = game.CreateItem()
@@ -85,9 +87,6 @@ def init(game: Game):
     tile_map2.AddComponent(Rigidbody(is_kinematic=True, use_gravity=False))
     tile_map2.transform.position = Vec2(0, 180)
 
-    Rigidbody.start_physics()
-
-
 def loop(game: Game):
     # --- Player Controls ---
     # Instead of setting velocity, we apply forces for smoother, physics-based movement.
@@ -118,7 +117,7 @@ def loop(game: Game):
     if rl.is_key_pressed(rl.KEY_SPACE):
         # A simple way to check if the player is on the ground is to do a short raycast downwards.
         origin = player.transform.position
-        hit_info = Collider.ray_cast_static(origin, Vec2(0, 1), 20, mask=1)  # Raycast 20 pixels down
+        hit_info = game.physics_world.ray_cast(origin, Vec2(0, 1), 20, mask=1)
         if hit_info:
             player_rg.add_impulse(Vec2(0.0, -jump_impulse))  # Apply an upward impulse
 
@@ -141,9 +140,9 @@ def loop(game: Game):
     Camera2D.main.draw_debug_line(player_pos, mouse_pos, rl.GREEN)
 
     # Perform the raycast
-    inf = Collider.ray_cast_static(player_pos, direction, 1000, mask=1)
+    inf = game.physics_world.ray_cast(player_pos, direction, 1000, mask=1)
     if inf:
-        col, point, normal = inf
+        col, point, normal, _distance = inf
         # Draw a red line to the hit point
         Camera2D.main.draw_debug_line(player_pos, point, rl.RED)
         # Draw the surface normal in blue

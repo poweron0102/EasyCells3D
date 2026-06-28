@@ -140,7 +140,7 @@ class Player(Component):
         # --- Raycast para o Chão ---
         # Ajuste da distância para o RectCast (considerando que o Rect já tem o tamanho do player)
         cast_distance = max(0.1, self.ray_length_down - (frame_size / 2))
-        hit_ground = Collider.rect_cast_static(
+        hit_ground = self.game.physics_world.rect_cast(
             origin=pos,
             size=Vec2(20, frame_size),
             angle=0,
@@ -163,7 +163,7 @@ class Player(Component):
         self.wall_direction = 0
 
         # Direita
-        hit_right = Collider.ray_cast_static(
+        hit_right = self.game.physics_world.ray_cast(
             origin=pos, direction=Vec2(1, 0), max_distance=self.ray_length_side, mask=self.environment_mask
         )
         if hit_right and hit_right[0] != self.collider:
@@ -171,7 +171,7 @@ class Player(Component):
             self.wall_direction = 1
 
         # Esquerda
-        hit_left = Collider.ray_cast_static(
+        hit_left = self.game.physics_world.ray_cast(
             origin=pos, direction=Vec2(-1, 0), max_distance=self.ray_length_side, mask=self.environment_mask
         )
         if hit_left and hit_left[0] != self.collider:
