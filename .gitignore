@@ -57,3 +57,4 @@ temp/
 
 # Generated discovery/cache files
 .cache/
+/Assets/Synty
