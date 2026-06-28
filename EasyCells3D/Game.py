@@ -8,6 +8,7 @@ from EasyCells3D.NewGame import NewGame
 
 if TYPE_CHECKING:
     from EasyCells3D.Components import Item
+    from EasyCells3D.PhysicsComponents3D.world import PhysicsWorld
 
 ItemClass: type
 
@@ -88,6 +89,7 @@ class Game:
         self.lights: list = []
         self.item_list: list[Item] = []
         self.to_init: list[Callable] = []
+        self.physics_world: 'PhysicsWorld | None' = None
         self.new_game(start_level, supress=True)
 
     def new_game(self, level: str | ModuleType, supress=False):
@@ -103,6 +105,12 @@ class Game:
         for item in list(self.item_list):
             if item.destroy_on_load:
                 item.Destroy()
+
+        # Demole o mundo de física antigo antes de montar a nova cena, pra não
+        # vazar o cliente pybullet entre cenas.
+        if self.physics_world is not None:
+            self.physics_world.destroy()
+            self.physics_world = None
 
         self.scheduler.clear()
         self.level.init(self)
@@ -142,6 +150,9 @@ class Game:
                 self.level.loop(self)
 
                 self.scheduler.update()
+
+                if self.physics_world is not None:
+                    self.physics_world.step(self.delta_time)
             except NewGame:
                 pass
 
@@ -167,6 +178,9 @@ class Game:
             self.level.loop(self)
 
             self.scheduler.update()
+
+            if self.physics_world is not None:
+                self.physics_world.step(self.delta_time)
         except NewGame:
             pass
 

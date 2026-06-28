@@ -27,10 +27,10 @@ Engine: EasyCells3D · Backend: PyBullet (`DIRECT`) · Destino: `EasyCells3D/Phy
 
 **Objetivo:** dependência instalada e pacote criado.
 
-- [ ] Adicionar `pybullet` ao gerenciamento de deps e ao `readme.md` (junto de
+- [x] Adicionar `pybullet` ao gerenciamento de deps e ao `readme.md` (junto de
       raylib/numpy/numba/scipy).
-- [ ] Criar `EasyCells3D/PhysicsComponents3D/__init__.py`.
-- [ ] Smoke test isolado (script avulso): `connect(DIRECT)` → `stepSimulation` em mundo
+- [x] Criar `EasyCells3D/PhysicsComponents3D/__init__.py`.
+- [x] Smoke test isolado (script avulso): `connect(DIRECT)` → `stepSimulation` em mundo
       vazio → `disconnect`, confirmando que a lib roda no ambiente.
 
 **Done quando:** `import pybullet` funciona e o smoke test passa.
@@ -41,22 +41,22 @@ Engine: EasyCells3D · Backend: PyBullet (`DIRECT`) · Destino: `EasyCells3D/Phy
 
 **Objetivo:** `game.physics_world` existe, ticka e é demolido na troca de cena.
 
-- [ ] `PhysicsWorld` (base abstrata) definindo a interface:
+- [x] `PhysicsWorld` (base abstrata) definindo a interface:
       `step(dt)`, `add_body(body)`, `remove_body(body)`, `raycast(...)`,
       `overlap_sphere(...)`, `set_gravity(v)`, `destroy()`, prop `debug_draw`.
-- [ ] `BulletPhysicsWorld(PhysicsWorld)`:
+- [x] `BulletPhysicsWorld(PhysicsWorld)`:
   - `__init__`: `self._client = pybullet.connect(pybullet.DIRECT)`, gravidade
     `(0, -9.81, 0)`, guarda lista de corpos registrados.
   - `step(dt)`: empurra KINEMATIC (M3) → `stepSimulation(dt, maxSubSteps=10,
     fixedTimeStep=1/120, physicsClientId=self._client)` → sync DYNAMIC (M2).
   - `destroy()`: `pybullet.disconnect(self._client)`.
-- [ ] **Editar `EasyCells3D/Game.py`:**
+- [x] **Editar `EasyCells3D/Game.py`:**
   - `__init__`: `self.physics_world: PhysicsWorld | None = None`.
   - `run()`: após `for item in ...: item.update()` e **antes** do render —
     `if self.physics_world: self.physics_world.step(self.delta_time)`.
   - `new_game()`: **antes** de `self.level.init(self)`, demolir o world antigo
     (`if self.physics_world: self.physics_world.destroy(); self.physics_world = None`).
-- [ ] Level de teste: `init` faz `game.physics_world = BulletPhysicsWorld()`.
+- [x] Level de teste: `init` faz `game.physics_world = BulletPhysicsWorld()`.
 
 **Done quando:** rodar com world ativo não quebra nem derruba FPS; trocar de cena
 não vaza cliente pybullet (verificar via contador de corpos/`getNumBodies`).
@@ -67,10 +67,10 @@ não vaza cliente pybullet (verificar via contador de corpos/`getNumBodies`).
 
 **Objetivo:** caixa dinâmica cai e assenta sobre chão estático.
 
-- [ ] `shapes.py`: dataclasses com tag de tipo — `BoxShape(half_extents)`,
+- [x] `shapes.py`: dataclasses com tag de tipo — `BoxShape(half_extents)`,
       `SphereShape(radius)`, `CapsuleShape(radius, height)`, `CylinderShape(...)`.
       Cada uma sabe construir o `collisionShape` no Bullet (`createCollisionShape`).
-- [ ] `PhysicsBody3D(Component)`:
+- [x] `PhysicsBody3D(Component)`:
   - `__init__(shape, mass=0, body_type=DYNAMIC, is_trigger=False, ...)`.
   - `init()`: assert `self.game.physics_world is not None` (erro claro se faltar);
     constrói shape, aplica `setLocalScaling(global_transform.scale)`, cria o
@@ -81,7 +81,7 @@ não vaza cliente pybullet (verificar via contador de corpos/`getNumBodies`).
     (guarda por referência ao world).
   - `enable` como *property*: `False` remove o corpo da simulação; `True` reinsere
     na pose atual.
-- [ ] Helpers de conversão `Quaternion`↔Bullet (quat xyzw) e `Vec3`↔lista.
+- [x] Helpers de conversão `Quaternion`↔Bullet (quat xyzw) e `Vec3`↔lista.
 
 **Done quando:** cena com chão `STATIC` (box) + caixa `DYNAMIC` caindo; o
 `StaticModel` da caixa segue a física e ela para no chão.
@@ -92,12 +92,12 @@ não vaza cliente pybullet (verificar via contador de corpos/`getNumBodies`).
 
 **Objetivo:** plataforma móvel carrega caixa; teleporte e troca de modo funcionam.
 
-- [ ] No `step()`: antes de simular, para cada KINEMATIC ler `global_transform`,
+- [x] No `step()`: antes de simular, para cada KINEMATIC ler `global_transform`,
       `resetBasePositionAndOrientation` + derivar/aplicar velocidade a partir do
       delta de pose (pra carregar/empurrar dinâmicos).
-- [ ] API do `PhysicsBody3D`: `velocity` (get/set), `apply_force(Vec3)`,
+- [x] API do `PhysicsBody3D`: `velocity` (get/set), `apply_force(Vec3)`,
       `apply_impulse(Vec3)`, `teleport(pos, rot=None)` (zera velocidade).
-- [ ] `body_type` como *property* setável: reconfigura o corpo existente
+- [x] `body_type` como *property* setável: reconfigura o corpo existente
       (massa/flags) sem recriar quando possível (DYNAMIC↔KINEMATIC↔STATIC).
 
 **Done quando:** plataforma KINEMATIC (movida só pelo `Transform`) transporta uma
@@ -110,14 +110,14 @@ em runtime funciona (base pra cutscene).
 
 **Objetivo:** mapa de `.gltf` colide sem trabalho manual.
 
-- [ ] `TriangleMeshShape(vertices, indices)`, `ConvexHullShape(vertices)`,
+- [x] `TriangleMeshShape(vertices, indices)`, `ConvexHullShape(vertices)`,
       `CompoundShape(children)`.
-- [ ] Extrair `vertices`/`indices` do `rl.Mesh` (via `StaticModel.model.meshes`).
-- [ ] Auto-build: se `shape=None` **e** `STATIC` **e** o item tem `StaticModel`,
+- [x] Extrair `vertices`/`indices` do `rl.Mesh` (via `StaticModel.model.meshes`).
+- [x] Auto-build: se `shape=None` **e** `STATIC` **e** o item tem `StaticModel`,
       construir `btBvhTriangleMeshShape` automaticamente.
-- [ ] DYNAMIC com `shape=None` → erro explícito ("triangle mesh dinâmica é
+- [x] DYNAMIC com `shape=None` → erro explícito ("triangle mesh dinâmica é
       proibida; passe uma primitiva/convex hull").
-- [ ] Helper pra carregar malha de colisão separada de outro gltf (`shape=` explícito).
+- [x] Helper pra carregar malha de colisão separada de outro gltf (`shape=` explícito).
 
 **Done quando:** carregar um mapa gltf e ver objetos dinâmicos colidindo com a
 geometria real do mapa.
@@ -128,14 +128,14 @@ geometria real do mapa.
 
 **Objetivo:** callbacks de colisão/trigger e raycast funcionando.
 
-- [ ] Diff de contatos por frame (`getContactPoints`) → dispara
+- [x] Diff de contatos por frame (`getContactPoints`) → dispara
       `on_collision_enter(other)` / `on_collision_exit(other)`.
-- [ ] Triggers: corpos `is_trigger=True` com flag de no-contact-response →
+- [x] Triggers: corpos `is_trigger=True` com flag de no-contact-response →
       `on_trigger_enter(other)` / `on_trigger_exit(other)`.
-- [ ] `physics_world.raycast(origin, dir, max_dist, mask) -> Hit | None`
+- [x] `physics_world.raycast(origin, dir, max_dist, mask) -> Hit | None`
       (Hit: body, point, normal, distance).
-- [ ] `physics_world.overlap_sphere(center, radius, mask) -> list[body]`.
-- [ ] `collision_group` / `collision_mask` (filtros nativos do Bullet) no corpo.
+- [x] `physics_world.overlap_sphere(center, radius, mask) -> list[body]`.
+- [x] `collision_group` / `collision_mask` (filtros nativos do Bullet) no corpo.
 
 **Done quando:** uma zona trigger dispara enter/exit ao atravessar; raycast pra
 baixo acerta o chão; callback de colisão imprime no impacto.
@@ -146,12 +146,12 @@ baixo acerta o chão; callback de colisão imprime no impacto.
 
 **Objetivo:** personagem controlável anda, pula e respeita rampas.
 
-- [ ] Cápsula DYNAMIC, `angularFactor=0`, `allow_sleep=False`.
-- [ ] `move(direction: Vec3)` (world-space; quem chama decide a câmera/input) seta
+- [x] Cápsula DYNAMIC, `angularFactor=0`, `allow_sleep=False`.
+- [x] `move(direction: Vec3)` (world-space; quem chama decide a câmera/input) seta
       a velocidade horizontal preservando a vertical.
-- [ ] `jump()`: só se `is_grounded` (raycast curto pra baixo, `ground_check_distance`).
-- [ ] Knobs: `move_speed`, `jump_height`, `ground_check_distance`, `max_slope`.
-- [ ] Construído **só** sobre a API pública (serve de exemplo de referência).
+- [x] `jump()`: só se `is_grounded` (raycast curto pra baixo, `ground_check_distance`).
+- [x] Knobs: `move_speed`, `jump_height`, `ground_check_distance`, `max_slope`.
+- [x] Construído **só** sobre a API pública (serve de exemplo de referência).
 
 **Done quando:** uma cápsula controlada pelo teclado anda sobre o mapa, pula, cai e
 não sobe rampas além do `max_slope`.
@@ -162,9 +162,9 @@ não sobe rampas além do `max_slope`.
 
 **Objetivo:** enxergar as shapes pra depurar colliders.
 
-- [ ] `physics_world.debug_draw = True` → no render, wireframes via primitivas Raylib
+- [x] `physics_world.debug_draw = True` → no render, wireframes via primitivas Raylib
       (box/esfera/cápsula) e linhas pra triangle mesh.
-- [ ] Opt-in, custo zero quando desligado.
+- [x] Opt-in, custo zero quando desligado.
 
 **Done quando:** o overlay de wireframe bate com os modelos visuais; cápsula do
 personagem visível.
@@ -173,9 +173,9 @@ personagem visível.
 
 ## Milestone 8 — Materiais & polimento
 
-- [ ] Ligar `friction=0.5`, `restitution=0.0`, `linear_damping=0.0`,
+- [x] Ligar `friction=0.5`, `restitution=0.0`, `linear_damping=0.0`,
       `angular_damping=0.05`, `gravity_scale ∈ {0.0, 1.0}`, `allow_sleep=True`.
-- [ ] Revisão de cleanup, docstrings e um exemplo completo em `Levels/`.
+- [x] Revisão de cleanup, docstrings e um exemplo completo em `Levels/`.
 
 ---
 

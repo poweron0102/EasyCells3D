@@ -20,6 +20,7 @@ Uma game engine em **Python**, leve e baseada em componentes (estilo Unity), com
 - [Renderização 2D](#renderização-2d)
 - [Renderização 3D](#renderização-3d)
 - [Física e colisões](#física-e-colisões)
+- [Física 3D (PyBullet)](#física-3d-pybullet)
 - [Campos serializáveis](#campos-serializáveis)
 - [Carregando cenas (.ecscene)](#carregando-cenas-ecscene)
 - [Agendador assíncrono (Scheduler)](#agendador-assíncrono-scheduler)
@@ -33,7 +34,7 @@ Uma game engine em **Python**, leve e baseada em componentes (estilo Unity), com
 
 - **Arquitetura baseada em componentes** — `Item` + `Component` + `Transform`, com hierarquia pai/filho.
 - **2D e 3D** — câmeras, sprites, spritesheets, modelos `.gltf`, luzes.
-- **Física** — `Rigidbody`, colisores poligonais (SAT), raycast e box cast, acelerados com Numba (JIT).
+- **Física** — 2D: `Rigidbody`, colisores poligonais (SAT), raycast e box cast, acelerados com Numba (JIT). 3D: `PhysicsBody3D` sobre PyBullet (corpos estáticos/dinâmicos/cinemáticos, triggers, raycast, personagem).
 - **Animação** — animador 2D por spritesheet e animador 3D por clipes.
 - **Agendador** — corrotinas `async`/`await` integradas ao loop do jogo (`sleep`, `next_frame`).
 - **Serialização de cenas** — carregue cenas a partir de arquivos JSON `.ecscene`.
@@ -44,11 +45,15 @@ Uma game engine em **Python**, leve e baseada em componentes (estilo Unity), com
 
 ## Instalação
 
-A engine depende de Raylib, NumPy, Numba e SciPy:
+A engine depende de Raylib, NumPy, Numba e SciPy. A física 3D usa PyBullet:
 
 ```bash
-pip install raylib numpy numba scipy
+pip install raylib numpy numba scipy pybullet
 ```
+
+> `pybullet` só é necessário se você usar a física 3D (`PhysicsComponents3D`).
+> Em alguns ambientes ele precisa compilar (requer um compilador C++); no
+> Windows, instale o "Desktop development with C++" do Visual Studio.
 
 Clone o repositório e use a pasta `EasyCells3D/` como pacote dentro do seu projeto:
 
@@ -400,6 +405,144 @@ hit = Collider.rect_cast_static(
 
 ---
 
+## Física 3D (PyBullet)
+
+A física 3D vive em `EasyCells3D.PhysicsComponents3D` e roda sobre o **PyBullet**
+(cliente `DIRECT`, sem janela própria — quem desenha é a Raylib). O design é
+simples: o Bullet é a fonte da verdade para corpos `DYNAMIC`; a engine empurra a
+pose para `STATIC` (no spawn) e `KINEMATIC` (todo frame).
+
+O mundo é um slot único em `game.physics_world`. Crie-o no `init()` do level — o
+`Game` o ticka automaticamente e o demole na troca de cena.
+
+```python
+from EasyCells3D.Geometry import Vec3
+from EasyCells3D.PhysicsComponents3D import (
+    BulletPhysicsWorld, PhysicsBody3D, BodyType, BoxShape, SphereShape,
+)
+
+def init(game):
+    game.physics_world = BulletPhysicsWorld()           # gravidade (0, -9.81, 0)
+
+    # Chão estático.
+    chao = game.CreateItem()
+    chao.AddComponent(PhysicsBody3D(BoxShape(Vec3(15, 0.5, 15)),
+                                    body_type=BodyType.STATIC))
+
+    # Caixa dinâmica que cai.
+    caixa = game.CreateItem()
+    caixa.transform.position = Vec3(0, 6, 0)
+    caixa.AddComponent(PhysicsBody3D(BoxShape(Vec3(0.5, 0.5, 0.5)),
+                                     body_type=BodyType.DYNAMIC, mass=1.0))
+```
+
+### Tipos de corpo (`BodyType`)
+
+| Tipo | Quem controla a pose | Uso |
+|---|---|---|
+| `STATIC` | engine (só no spawn) | chão, paredes, cenário |
+| `DYNAMIC` | Bullet (gravidade/forças/colisão) | caixas, projéteis, ragdolls |
+| `KINEMATIC` | engine (via `Transform`, todo frame) | plataformas móveis, portas |
+
+`body_type` é uma *property* setável em runtime (ex.: congelar um dinâmico numa
+cutscene virando `KINEMATIC` e voltar depois).
+
+### Shapes
+
+`BoxShape(half_extents)`, `SphereShape(radius)`, `CapsuleShape(radius, height)`,
+`CylinderShape(radius, height)`, `ConvexHullShape(vertices)` (pode ser dinâmico),
+`TriangleMeshShape(vertices, indices)` (côncava, **só** `STATIC`) e
+`CompoundShape(children)`. A escala do `Transform` é embutida na shape no spawn.
+
+**Auto-build:** se você passar `shape=None` num corpo `STATIC` que tenha um
+`StaticModel` no mesmo item, a colisão é construída automaticamente como uma
+triangle mesh a partir da geometria do modelo `.gltf`/`.glb`:
+
+```python
+mapa = game.CreateItem()
+mapa.AddComponent(StaticModel("Blender/scene.glb"))
+mapa.AddComponent(PhysicsBody3D(shape=None, body_type=BodyType.STATIC))  # colisão automática
+```
+
+### Controlando corpos
+
+```python
+body = caixa.GetComponent(PhysicsBody3D)
+body.velocity = Vec3(0, 0, 0)        # get/set velocidade linear
+body.apply_force(Vec3(0, 50, 0))     # força contínua (chame todo frame)
+body.apply_impulse(Vec3(5, 0, 0))    # impulso instantâneo
+body.teleport(Vec3(0, 10, 0))        # reposiciona e zera a velocidade
+body.enable = False                  # remove da simulação (reinsere com True)
+```
+
+`PhysicsBody3D(...)` aceita: `shape`, `mass`, `body_type`, `is_trigger`,
+`friction`, `restitution`, `linear_damping`, `angular_damping`, `gravity_scale`
+(`0.0` ou `1.0`), `allow_sleep`, `lock_rotation`, `collision_group`,
+`collision_mask`.
+
+### Eventos de colisão e trigger
+
+Qualquer componente no mesmo item pode receber os callbacks (estilo Unity). O
+argumento é o **outro** `PhysicsBody3D`:
+
+```python
+class Tiro(Component):
+    def on_collision_enter(self, other): ...
+    def on_collision_exit(self, other): ...
+
+class Zona(Component):   # no item de um corpo is_trigger=True
+    def on_trigger_enter(self, other): ...
+    def on_trigger_exit(self, other): ...
+```
+
+Triggers (`is_trigger=True`) detectam sobreposição sem gerar resposta física.
+
+### Queries
+
+```python
+hit = game.physics_world.raycast(Vec3(0, 5, 0), Vec3(0, -1, 0), max_dist=10)
+if hit:
+    print(hit.body, hit.point, hit.normal, hit.distance)
+
+corpos = game.physics_world.overlap_sphere(Vec3(0, 1, 0), radius=2.0)
+```
+
+### Personagem
+
+`CharacterController3D` é um helper agnóstico de câmera, construído só sobre a
+API pública. Espera uma cápsula `DYNAMIC` com `lock_rotation=True`:
+
+```python
+from EasyCells3D.PhysicsComponents3D import CapsuleShape, CharacterController3D
+
+p = game.CreateItem()
+p.AddComponent(PhysicsBody3D(CapsuleShape(0.4, 1.0), body_type=BodyType.DYNAMIC,
+                             mass=1.0, lock_rotation=True, allow_sleep=False))
+cc = p.AddComponent(CharacterController3D(move_speed=5.0, jump_height=1.4,
+                                          max_slope=50.0))
+
+def loop(game):
+    cc.move(Vec3(1, 0, 0))   # direção em world-space; quem chama escolhe a câmera
+    if rl.is_key_pressed(rl.KeyboardKey.KEY_SPACE) and cc.is_grounded:
+        cc.jump()
+```
+
+### Debug draw
+
+Adicione um `PhysicsDebugRenderer` a qualquer item (ex.: o da câmera) e ligue o
+flag — os colliders aparecem como wireframe (custo zero quando desligado):
+
+```python
+from EasyCells3D.PhysicsComponents3D import PhysicsDebugRenderer
+
+cam.AddComponent(PhysicsDebugRenderer())
+game.physics_world.debug_draw = True
+```
+
+> Cena completa de exemplo: [Levels/physics3d_demo.py](Levels/physics3d_demo.py).
+
+---
+
 ## Campos serializáveis
 
 `SerializeField` declara atributos que aparecem no editor e são salvos/carregados em cenas `.ecscene`. Funciona como um descriptor: leia/escreva como um atributo normal.
@@ -496,7 +639,8 @@ EasyCells3D/
 │   ├── Serialization.py    # SerializeField
 │   ├── ComponentRegistry.py
 │   ├── Components/         # Component, Item, Transform, câmeras, sprites, modelos…
-│   ├── PhysicsComponents/  # Rigidbody, Collider, TileMapCollider…
+│   ├── PhysicsComponents/  # física 2D: Rigidbody, Collider, TileMapCollider…
+│   ├── PhysicsComponents3D/ # física 3D (PyBullet): PhysicsBody3D, shapes, personagem…
 │   ├── NetworkComponents/  # componentes de rede
 │   ├── UiComponents/       # UI
 │   └── AssetTypes/         # gerenciamento de assets
