@@ -165,6 +165,8 @@ class PhysicsBody3D(Component):
         )
         if not self.allow_sleep or self._body_type != BodyType.DYNAMIC:
             kwargs["activationState"] = p.ACTIVATION_STATE_DISABLE_SLEEPING
+        if self.lock_rotation and self._body_type == BodyType.DYNAMIC:
+            kwargs["localInertiaDiagonal"] = [0.0, 0.0, 0.0]
         p.changeDynamics(self.uid, -1, **kwargs)
 
     def _apply_collision_filter(self):
