@@ -5,8 +5,7 @@ from typing import Callable
 from weakref import WeakValueDictionary
 
 from EasyCells3D.Components.Component import Component
-from EasyCells3D.NetworkTCP import NetworkServerTCP, NetworkClientTCP
-from EasyCells3D.NetworkUDP import NetworkServerUDP, NetworkClientUDP
+from EasyCells3D.Transport import Transport, TcpTransport, UdpTransport
 
 # --- Constantes de Protocolo ---
 OP_RPC = 1
@@ -188,7 +187,7 @@ class NetworkComponent(Component):
             nm.broadcast(packet, protocol)
         elif send_to == SendTo.NOT_ME:
             # Broadcast manual excluindo o sender
-            clients = nm.tcp_server.clients if protocol == Protocol.TCP else nm.udp_server.clients
+            clients = nm.transports[protocol].clients
             for cid in range(1, len(clients)):
                 if cid != sender_id:
                     nm.send_to_client(packet, cid, protocol)
@@ -244,7 +243,7 @@ class NetworkVariable[T]:
                 packet = (OP_VAR, self.var_id, VAR_SET, (new_val,))
 
                 # Relay via TCP para garantir entrega
-                clients = nm.tcp_server.clients
+                clients = nm.transports[Protocol.TCP].clients
                 for cid in range(1, len(clients)):
                     if cid != sender_id:
                         nm.send_to_client(packet, cid, Protocol.TCP)
@@ -285,13 +284,13 @@ class NetworkManager(Component):
             except ValueError:
                 ip_version = 4
 
-        # Inicializa AMBOS os protocolos
-        if self.is_server:
-            self.tcp_server = NetworkServerTCP(ip, port, ip_version, self.server_callback_tcp)
-            self.udp_server = NetworkServerUDP(ip, port, ip_version, self.server_callback_udp)
-        else:
-            self.tcp_client = NetworkClientTCP(ip, port, ip_version, self.client_callback_tcp)
-            self.udp_client = NetworkClientUDP(ip, port, ip_version, self.client_callback_udp)
+        # Inicializa AMBOS os protocolos atrás da interface Transport
+        self.transports: dict[Protocol, Transport] = {
+            Protocol.TCP: TcpTransport(ip, port, ip_version, is_server,
+                self.server_callback_tcp if is_server else self.client_callback_tcp),
+            Protocol.UDP: UdpTransport(ip, port, ip_version, is_server,
+                self.server_callback_udp if is_server else self.client_callback_udp),
+        }
 
         self._tcp_connected = False
         self._udp_connected = False
@@ -331,30 +330,21 @@ class NetworkManager(Component):
         if self.is_server:
             return  # Servidor não envia para servidor
 
-        if protocol == Protocol.TCP:
-            self.tcp_client.send(packet)
-        else:
-            self.udp_client.send(packet)
+        self.transports[protocol].send(packet)
 
     def send_to_client(self, packet: object, client_id: int, protocol: Protocol):
         """Envia pacote para um cliente específico."""
         if not self.is_server:
             return
 
-        if protocol == Protocol.TCP:
-            self.tcp_server.send(packet, client_id)
-        else:
-            self.udp_server.send(packet, client_id)
+        self.transports[protocol].send(packet, client_id)
 
     def broadcast(self, packet: object, protocol: Protocol):
         """Envia para todos os clientes."""
         if not self.is_server:
             return
 
-        if protocol == Protocol.TCP:
-            self.tcp_server.broadcast(packet)
-        else:
-            self.udp_server.broadcast(packet)
+        self.transports[protocol].broadcast(packet)
 
     # --- Loop ---
 
@@ -369,26 +359,16 @@ class NetworkManager(Component):
             self._client_loop()
 
     def _server_loop(self):
-        # Ler TCP
-        clients_tcp = self.tcp_server.clients
-        for client_id in range(1, len(clients_tcp)):
-            while data := self.tcp_server.read(client_id):
-                self.process_packet(data, client_id)
-
-        # Ler UDP
-        clients_udp = self.udp_server.clients
-        for client_id in range(1, len(clients_udp)):
-            while data := self.udp_server.read(client_id):
-                self.process_packet(data, client_id)
+        for transport in self.transports.values():
+            clients = transport.clients
+            for client_id in range(1, len(clients)):
+                while data := transport.read(client_id):
+                    self.process_packet(data, client_id)
 
     def _client_loop(self):
-        # Ler TCP
-        while data := self.tcp_client.read():
-            self.process_packet(data, 0)
-
-        # Ler UDP
-        while data := self.udp_client.read():
-            self.process_packet(data, 0)
+        for transport in self.transports.values():
+            while data := transport.read():
+                self.process_packet(data, 0)
 
     def call_rpc_on_client(self, client_id: int, rpc_method: Callable, *args):
         """Invoca um RPC num cliente específico. Tenta detectar protocolo do método."""
@@ -430,9 +410,5 @@ class NetworkManager(Component):
             print(f"Erro processando pacote: {e}")
 
     def on_destroy(self):
-        if self.is_server:
-            self.tcp_server.close()
-            self.udp_server.close()
-        else:
-            self.tcp_client.close()
-            self.udp_client.close()
+        for transport in self.transports.values():
+            transport.close()
