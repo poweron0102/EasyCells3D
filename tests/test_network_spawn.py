@@ -2,7 +2,7 @@ from contextlib import contextmanager
 from weakref import WeakValueDictionary
 import unittest
 
-from EasyCells3D.NetworkComponents import NetworkComponent, NetworkManager, NetworkTransform, NetworkVariable
+from EasyCells3D.NetworkComponents import NetworkComponent, NetworkManager, NetworkTransform, NetworkVariable, Rpc, SendTo, Protocol
 from test_network_lifecycle import DummyGame
 from test_network_rpc import MemoryNetwork
 
@@ -15,6 +15,10 @@ class Player(NetworkComponent):
 
     def on_network_spawn(self):
         self.spawn_health = self.health.value
+
+    @Rpc(send_to=SendTo.SERVER)
+    def observe(self):
+        self.rpc_health = self.spawn_health
 
 
 def player_factory(game, *, x=0):
@@ -184,6 +188,28 @@ class SpawnTests(unittest.TestCase):
             self.assertEqual(copy.transform.x, 12)
             self.assertEqual(copy.GetComponent(Player).health.value, 75)
             self.assertEqual(copy.GetComponent(Player).spawn_health, 75)
+
+    def test_rpc_waits_when_connection_callback_creates_its_target(self):
+        manager = self.server.manager
+        created = []
+
+        class Transport:
+            clients = [None, True]
+            def read(inner, peer):
+                if created:
+                    return None
+                item = manager.spawn('player', owner=1)
+                created.append(item)
+                return (1, item.GetComponent(Player).identifier, 'observe', (), {})
+
+        with self.server.active():
+            manager.transports = {Protocol.TCP: Transport()}
+            manager._server_loop()
+            player = created[0].GetComponent(Player)
+            self.assertFalse(hasattr(player, 'rpc_health'))
+            self.server.game.flush_init()
+            manager._server_loop()
+            self.assertEqual(player.rpc_health, 100)
 
     def test_unknown_factory_is_not_imported_or_executed(self):
         with self.server.active() as manager:

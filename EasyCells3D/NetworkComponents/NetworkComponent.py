@@ -323,6 +323,7 @@ class NetworkManager(Component):
         self.max_packets_per_peer = max_packets_per_peer
         self.max_frame_ms = max_frame_ms
         self._poll_cursor = 0
+        self._deferred_packet = None
         self.max_clients = max_clients
         self.max_udp_queue = max_udp_queue
         self.enable_udp = enable_udp
@@ -579,6 +580,14 @@ class NetworkManager(Component):
         deadline = perf_counter() + self.max_frame_ms / 1000
         remaining = self.max_packets_per_frame
         counts, empty = {}, set()
+        if self._deferred_packet is not None:
+            data, cid = self._deferred_packet
+            self._deferred_packet = None
+            self.process_packet(data, cid)
+            remaining -= 1
+            counts[cid] = 1
+            if any(not obj.ready for obj in self._spawned.values()):
+                return
         for _ in range(self.max_packets_per_peer):
             for index, (transport, cid) in enumerate(peers):
                 if index in empty or counts.get(cid, 0) >= self.max_packets_per_peer:
@@ -586,6 +595,9 @@ class NetworkManager(Component):
                 if remaining == 0 or perf_counter() >= deadline:
                     return
                 data = transport.read(cid) if self.is_server else transport.read()
+                if any(not obj.ready for obj in self._spawned.values()):
+                    self._deferred_packet = (data, cid) if data is not None else None
+                    return
                 if data is None:
                     empty.add(index)
                     continue
