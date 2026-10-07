@@ -64,11 +64,11 @@ class TcpTransport(_BaseTransport):
 
 class UdpTransport(_BaseTransport):
     def __init__(self, ip: str, port: int, ip_version: int, is_server: bool,
-                 callback: Callable[[int], None], tcp: TcpTransport | None = None):
+                 callback: Callable[[int], None], tcp: TcpTransport | None = None, *, max_queue: int = 128):
         self.is_server = is_server
         if is_server:
             peer_token = (lambda cid: tcp._impl.peer_tokens.get(cid)) if tcp else None
-            self._impl = NetworkServerUDP(ip, port, ip_version, callback, peer_token)
+            self._impl = NetworkServerUDP(ip, port, ip_version, callback, peer_token, max_queue=max_queue)
         else:
             peer_id = (lambda: tcp._impl.id) if tcp else None
             peer_token = (lambda: tcp._impl.session_token) if tcp else None

@@ -261,6 +261,7 @@ class NetworkManager(Component):
             enable_udp: bool = True,
             disconnect_callback: Callable[[int], None] = None,
             max_clients: int = 64,
+            max_udp_queue: int = 128,
     ):
         self.is_server = is_server
         self.ip = ip
@@ -275,6 +276,7 @@ class NetworkManager(Component):
             self.connect_callbacks.append(connect_callback)
 
         self.max_clients = max_clients
+        self.max_udp_queue = max_udp_queue
         self.enable_udp = enable_udp
         self._tcp_connected = False
         self._udp_connected = False
@@ -366,7 +368,7 @@ class NetworkManager(Component):
                 self.port = self.transports[Protocol.TCP]._impl.server_socket.getsockname()[1]
             self.transports[Protocol.UDP] = UdpTransport(self.ip, self.port, ip_version, self.is_server,
                 self.server_callback_udp if self.is_server else self.client_callback_udp,
-                self.transports[Protocol.TCP])
+                self.transports[Protocol.TCP], max_queue=self.max_udp_queue)
 
 
     def loop(self):

@@ -7,7 +7,10 @@ import threading
 import select
 import time
 from collections import deque
-from EasyCells3D.NetworkTCP import _decode, _ConnectionEvents
+from EasyCells3D.NetworkTCP import _decode, _ConnectionEvents, MAX_PEER_ID
+
+MAX_DATAGRAM = 1200
+MAX_PACKETS_PER_SECOND = 1000
 
 
 class _DatagramSession:
@@ -21,20 +24,30 @@ class _DatagramSession:
         self.sequence = 0
         self.latest = 0
         self.seen = 0
+        self.receive_window = time.monotonic()
+        self.received = 0
         self.lock = threading.Lock()
 
     def encode(self, message):
         with self.lock:
             self.sequence += 1
             body = self.header.pack(self.peer_id, self.sequence) + pickle.dumps(message, protocol=4)
+            if len(body) + 32 > MAX_DATAGRAM:
+                raise ValueError("UDP packet exceeds 1200 bytes; use TCP for larger messages")
             return body + hmac.digest(self.token, self.outgoing + body, "sha256")
 
     def decode(self, packet):
-        if len(packet) < self.header.size + 32:
+        if not self.header.size + 32 <= len(packet) <= MAX_DATAGRAM:
             raise ValueError("Invalid UDP envelope")
         body, tag = packet[:-32], packet[-32:]
         if not hmac.compare_digest(tag, hmac.digest(self.token, self.incoming + body, "sha256")):
             raise ValueError("Invalid UDP authentication")
+        now = time.monotonic()
+        if now - self.receive_window >= 1:
+            self.receive_window, self.received = now, 0
+        if self.received >= MAX_PACKETS_PER_SECOND:
+            raise ValueError("UDP receive rate exceeded")
+        self.received += 1
         peer_id, sequence = self.header.unpack_from(body)
         if peer_id != self.peer_id or sequence == 0:
             raise ValueError("Invalid UDP peer or sequence")
@@ -53,13 +66,16 @@ class _DatagramSession:
 class NetworkServerUDP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable[[int], None] = lambda x: None,
-                 peer_token: Callable[[int], bytes | None] | None = None):
+                 peer_token: Callable[[int], bytes | None] | None = None, *, max_queue: int = 128):
         self.ip = ip
         self.port = port
         self.ip_version = ip_version
         if peer_token is None:
             raise ValueError("UDP requires a TCP session token provider")
         self.peer_token = peer_token
+        if max_queue < 1:
+            raise ValueError("max_queue must be positive")
+        self.max_queue = max_queue
         self._sessions = {}
 
         # Clients list stores tuples of (ip, port)
@@ -80,6 +96,7 @@ class NetworkServerUDP(_ConnectionEvents):
             raise ValueError("Invalid IP version")
 
         self.server_socket.bind((self.ip, self.port))
+        self.server_socket.settimeout(.1)
         super().__init__(connect_callback)
         print(f"UDP Server running on {(self.ip, self.port)}")
 
@@ -98,11 +115,13 @@ class NetworkServerUDP(_ConnectionEvents):
             try:
                 # 65535 is the theoretical max UDP packet size.
                 # This blocks until data is received.
-                data, addr = self.server_socket.recvfrom(65535)
+                data, addr = self.server_socket.recvfrom(MAX_DATAGRAM + 1)
 
-                if len(data) < _DatagramSession.header.size + 32:
+                if not _DatagramSession.header.size + 32 <= len(data) <= MAX_DATAGRAM:
                     continue
                 client_id, _ = _DatagramSession.header.unpack_from(data)
+                if not 0 < client_id <= MAX_PEER_ID:
+                    continue
                 token = self.peer_token(client_id)
                 if token is None:
                     continue
@@ -122,7 +141,7 @@ class NetworkServerUDP(_ConnectionEvents):
                         self.clients.extend([None] * max(0, client_id + 1 - len(self.clients)))
                         self.clients[client_id] = addr
                         self.client_map[addr] = client_id
-                        self.msg_queues[client_id] = deque()
+                        self.msg_queues[client_id] = deque(maxlen=self.max_queue)
                         self._sessions[client_id] = session
                         self._connect_events.append(client_id)
                     self.send(client_id, client_id)
@@ -131,6 +150,8 @@ class NetworkServerUDP(_ConnectionEvents):
 
             except (pickle.UnpicklingError, EOFError, ValueError, TypeError):
                 continue
+            except TimeoutError:
+                continue
             except ConnectionResetError:
                 continue  # Windows may report a departed UDP peer on the shared socket.
             except OSError:
@@ -138,14 +159,14 @@ class NetworkServerUDP(_ConnectionEvents):
                 break
 
     def send(self, data: object, client_id: int):
-        if client_id >= len(self.clients) or self.clients[client_id] is None:
+        if not 0 < client_id < len(self.clients) or self.clients[client_id] is None:
             return
 
         addr = self.clients[client_id]
+        serialized = self._sessions[client_id].encode(data)
         try:
             # UDP preserves boundaries, so we don't need a size header.
             # However, data must fit in one packet (approx 64k).
-            serialized = self._sessions[client_id].encode(data)
             self.server_socket.sendto(serialized, addr)
         except Exception as e:
             print(f"Send error to {client_id}: {e}")
@@ -153,17 +174,22 @@ class NetworkServerUDP(_ConnectionEvents):
     def read(self, client_id: int) -> Any:
         self.poll_events()
         # Check if we have buffered messages for this client
-        if client_id in self.msg_queues and self.msg_queues[client_id]:
-            return self.msg_queues[client_id].popleft()
+        queue = self.msg_queues.get(client_id)
+        if queue:
+            return queue.popleft()
         return None
 
-    def block_read(self, client_id: int) -> Any:
+    def block_read(self, client_id: int, timeout: float = 5.0) -> Any:
         # Simple polling wait since we rely on the background thread
-        while True:
+        deadline = time.monotonic() + timeout
+        while self.running and client_id in self.msg_queues:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("UDP read timed out")
             val = self.read(client_id)
             if val is not None:
                 return val
             time.sleep(0.01)
+        raise ConnectionError("UDP peer is closed")
 
     def broadcast(self, data: object):
         for i in range(1, len(self.clients)):
@@ -180,10 +206,14 @@ class NetworkServerUDP(_ConnectionEvents):
         # Send a dummy packet to self to unblock the recv loop?
         # Or just close socket (causes OSError in thread, which we catch)
         self.server_socket.close()
-        print("Server closed")
+        self.recv_thread.join(timeout=1)
+        self._connect_events.clear()
+        self._sessions.clear()
+        self.msg_queues.clear()
+        self.client_map.clear()
 
     def close_client(self, client_id: int):
-        if client_id < len(self.clients) and self.clients[client_id]:
+        if 0 < client_id < len(self.clients) and self.clients[client_id]:
             self.send("close", client_id)
             addr = self.clients[client_id]
             if addr in self.client_map:

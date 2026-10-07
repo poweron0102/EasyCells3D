@@ -1,6 +1,9 @@
 import pickle
 import socket
 import unittest
+from unittest.mock import patch
+
+from EasyCells3D.NetworkUDP import NetworkServerUDP, _DatagramSession
 
 from EasyCells3D.NetworkTCP import NetworkClientTCP, NetworkServerTCP, _read
 from test_network_lifecycle import wait_until
@@ -36,6 +39,49 @@ class TcpLimitsTests(unittest.TestCase):
         server = NetworkServerTCP('127.0.0.1', 0)
         server.close()
         self.assertFalse(server.accept_thread.is_alive())
+
+
+class UdpLimitsTests(unittest.TestCase):
+    def test_oversized_datagram_is_rejected_before_sending(self):
+        session = _DatagramSession(1, b'a' * 32, False)
+        with self.assertRaises(ValueError):
+            session.encode(b'x' * 1200)
+
+    def test_authenticated_receive_rate_is_bounded(self):
+        from EasyCells3D.NetworkUDP import MAX_PACKETS_PER_SECOND
+        sender = _DatagramSession(1, b'a' * 32, False)
+        receiver = _DatagramSession(1, b'a' * 32, True)
+        with patch('EasyCells3D.NetworkUDP.time.monotonic', return_value=receiver.receive_window):
+            for _ in range(MAX_PACKETS_PER_SECOND):
+                receiver.decode(sender.encode('message'))
+            with self.assertRaisesRegex(ValueError, 'rate'):
+                receiver.decode(sender.encode('excess'))
+        with patch('EasyCells3D.NetworkUDP.time.monotonic', return_value=receiver.receive_window + 2):
+            self.assertEqual(receiver.decode(sender.encode('resumed')), 'resumed')
+
+    def test_queue_retains_only_latest_messages(self):
+        key = b'a' * 32
+        client = _DatagramSession(1, key, False)
+        packets = iter(client.encode(msg) for msg in ('HANDSHAKE', 1, 2, 3, 4))
+
+        class Socket:
+            def bind(self, address): pass
+            def settimeout(self, timeout): pass
+            def sendto(self, data, address): pass
+            def close(self): pass
+            def recvfrom(self, size):
+                try:
+                    return next(packets), ('127.0.0.1', 5000)
+                except StopIteration:
+                    raise OSError('end')
+
+        with patch('EasyCells3D.NetworkUDP.socket.socket', return_value=Socket()), patch(
+                'EasyCells3D.NetworkUDP.threading.Thread'):
+            server = NetworkServerUDP('127.0.0.1', 0, peer_token=lambda cid: key if cid == 1 else None,
+                                      max_queue=2)
+            server.receive_loop()
+            self.assertEqual(list(server.msg_queues[1]), [3, 4])
+            server.close()
 
 
 if __name__ == '__main__':
