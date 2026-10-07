@@ -71,6 +71,21 @@ class LifecycleTests(unittest.TestCase):
             self.assertIsNone(NetworkManager.instance)
 
 
+    def test_client_callback_waits_for_main_thread_poll(self):
+        calls = []
+        server = NetworkServerTCP('127.0.0.1', 0)
+        self.addCleanup(server.close)
+        client = NetworkClientTCP('127.0.0.1', server.server_socket.getsockname()[1],
+                                  connect_callback=lambda _: calls.append(threading.get_ident()))
+        self.addCleanup(client.close)
+        wait_until(lambda: client.connected or client.error)
+        self.assertTrue(client.connected, client.error)
+        client.connect_thread.join(1)
+        self.assertEqual(calls, [])
+        client.read()
+        client.read()
+        self.assertEqual(calls, [threading.get_ident()])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -5,7 +5,7 @@ import select
 import socket
 import threading
 from typing import Callable
-from .scheduler import Scheduler
+from collections import deque
 
 SIZE_SIZE = 4
 MAX_PACKET = 1_048_576
@@ -55,15 +55,26 @@ def _block_read(sock):
         raise ConnectionError("Invalid packet size")
     return _decode(exact(size))
 
-class NetworkServerTCP:
+class _ConnectionEvents:
+    """Deliver worker-thread notifications only when the caller polls on its game thread."""
+
+    def __init__(self, callback):
+        self.connect_callback = callback
+        self._connect_events = deque()
+
+    def poll_events(self):
+        for _ in range(len(self._connect_events)):
+            self.connect_callback(self._connect_events.popleft())
+
+
+class NetworkServerTCP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable = lambda _: None):
         self.ip, self.port = ip, port
         self.clients = [None]
         self._buffers = {}
         self.running = True
-        self.connect_callback = connect_callback
-        self.scheduler = Scheduler.instance
+        super().__init__(connect_callback)
         self.server_socket = socket.socket(socket.AF_INET6 if ip_version == 6 else socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind((ip, port))
         self.server_socket.listen(8)
@@ -80,13 +91,10 @@ class NetworkServerTCP:
                 self.clients.append(peer)
                 self._buffers[cid] = bytearray()
                 self.send(cid, cid)
-                self.scheduler.create_task(self._run_connect_callback(cid))
+                self._connect_events.append(cid)
             except OSError:
                 if not self.running:
                     break
-
-    async def _run_connect_callback(self, client_id):
-        self.connect_callback(client_id)
 
     def send(self, data, client_id):
         if client_id >= len(self.clients) or self.clients[client_id] is None:
@@ -97,6 +105,7 @@ class NetworkServerTCP:
             self.close_client(client_id)
 
     def read(self, client_id):
+        self.poll_events()
         if client_id >= len(self.clients) or self.clients[client_id] is None:
             return None
         try:
@@ -124,16 +133,17 @@ class NetworkServerTCP:
         self._buffers.pop(client_id, None)
 
     def close(self):
+        self._connect_events.clear()
         self.running = False
         for cid in range(1, len(self.clients)):
             self.close_client(cid)
         self.server_socket.close()
 
-class NetworkClientTCP:
+class NetworkClientTCP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable = lambda _: None):
         self.ip, self.port = ip, port
-        self.connect_callback = connect_callback
+        super().__init__(connect_callback)
         self.id = None
         self.error = ""
         self.connected = False
@@ -150,7 +160,7 @@ class NetworkClientTCP:
             self.id = int(self.block_read())
             self.server_socket.settimeout(.1)
             self.connected = True
-            self.connect_callback(self.id)
+            self._connect_events.append(self.id)
         except (OSError, ValueError, EOFError, pickle.UnpicklingError) as exc:
             self.error = str(exc)
             self.server_socket.close()
@@ -165,6 +175,7 @@ class NetworkClientTCP:
             self.close()
 
     def read(self):
+        self.poll_events()
         if not self.connected:
             return None
         try:
@@ -182,5 +193,6 @@ class NetworkClientTCP:
         return _block_read(self.server_socket)
 
     def close(self):
+        self._connect_events.clear()
         self.connected = False
         self.server_socket.close()

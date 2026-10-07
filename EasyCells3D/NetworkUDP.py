@@ -5,11 +5,10 @@ import threading
 import select
 import time
 from collections import deque
-from EasyCells3D.scheduler import Scheduler
-from EasyCells3D.NetworkTCP import _decode
+from EasyCells3D.NetworkTCP import _decode, _ConnectionEvents
 
 
-class NetworkServerUDP:
+class NetworkServerUDP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable[[int], None] = lambda x: None,
                  peer_exists: Callable[[int], bool] | None = None):
@@ -36,7 +35,7 @@ class NetworkServerUDP:
             raise ValueError("Invalid IP version")
 
         self.server_socket.bind((self.ip, self.port))
-        self.connect_callback = connect_callback
+        super().__init__(connect_callback)
         print(f"UDP Server running on {(self.ip, self.port)}")
 
         self.running = True
@@ -83,7 +82,7 @@ class NetworkServerUDP:
                     # Send the client their ID
                     self.send(client_id, client_id)
 
-                    Scheduler.instance.create_task(self._run_connect_callback(client_id))
+                    self._connect_events.append(client_id)
 
                 else:
                     queue = self.msg_queues.get(self.client_map.get(addr))
@@ -97,9 +96,6 @@ class NetworkServerUDP:
             except OSError:
                 # Socket likely closed
                 break
-
-    async def _run_connect_callback(self, client_id: int):
-        self.connect_callback(client_id)
 
     def send(self, data: object, client_id: int):
         if client_id >= len(self.clients) or self.clients[client_id] is None:
@@ -115,6 +111,7 @@ class NetworkServerUDP:
             print(f"Send error to {client_id}: {e}")
 
     def read(self, client_id: int) -> Any:
+        self.poll_events()
         # Check if we have buffered messages for this client
         if client_id in self.msg_queues and self.msg_queues[client_id]:
             return self.msg_queues[client_id].popleft()
@@ -134,6 +131,7 @@ class NetworkServerUDP:
                 self.send(data, i)
 
     def close(self):
+        self._connect_events.clear()
         self.running = False
         for i in range(1, len(self.clients)):
             if self.clients[i] is not None:
@@ -155,13 +153,13 @@ class NetworkServerUDP:
             self.clients[client_id] = None
 
 
-class NetworkClientUDP:
+class NetworkClientUDP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable[[int], None] = lambda x: None,
                  peer_id: Callable[[], int | None] | None = None):
         self.ip = ip
         self.port = port
-        self.connect_callback = connect_callback
+        super().__init__(connect_callback)
         self.peer_id = peer_id
 
         if ip_version == 6:
@@ -206,7 +204,7 @@ class NetworkClientUDP:
                         if isinstance(reply, int) and (self.peer_id is None or reply == self.peer_id()):
                             self.id = reply
                             self.server_socket.settimeout(None)
-                            self.connect_callback(self.id)
+                            self._connect_events.append(self.id)
                             return
                 except (TimeoutError, ConnectionResetError):
                     continue
@@ -227,6 +225,7 @@ class NetworkClientUDP:
             self.error = str(exc)
 
     def read(self) -> Any:
+        self.poll_events()
         # Only the handshake thread reads until it has received the peer ID.
         if self.id is None or not self.running:
             return None
@@ -254,6 +253,7 @@ class NetworkClientUDP:
         return _decode(data)
 
     def close(self):
+        self._connect_events.clear()
         self.running = False
         self.server_socket.close()
 
