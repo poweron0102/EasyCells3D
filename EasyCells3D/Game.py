@@ -77,6 +77,9 @@ class Game:
                 rl.set_target_fps(target_fps)
 
         self.show_fps = show_fps
+        self.running = True
+        self.closed = False
+        self.background_color = rl.Color(30, 30, 30, 255)
         self.game_name = game_name
 
         self.time = rl.get_time() * 1000
@@ -102,6 +105,16 @@ class Game:
 
         self.run_time = 0
 
+        # Persistent items (and their children) still need pending Component.init.
+        def survives_load(callback):
+            item = getattr(getattr(callback, "__self__", None), "item", None)
+            if item is None:
+                return False
+            while item.parent is not None:
+                item = item.parent
+            return not item.destroy_on_load
+
+        self.to_init[:] = [callback for callback in self.to_init if survives_load(callback)]
         for item in list(self.item_list):
             if item.destroy_on_load:
                 item.Destroy()
@@ -137,7 +150,7 @@ class Game:
                 pass
 
     def run(self):
-        while not rl.window_should_close():
+        while self.running and not rl.window_should_close():
             self.update()
             try:
                 for function in self.to_init:
@@ -158,12 +171,30 @@ class Game:
 
             # Início do frame de renderização
             rl.begin_drawing()
-            rl.clear_background(rl.Color(30, 30, 30, 255))
+            rl.clear_background(self.background_color)
 
             for camera in self.cameras:
                 camera.render()
             rl.end_drawing()
-        rl.close_window()
+        self.close()
+
+    def close(self):
+        """Release scene resources, physics and persistent connections before the window."""
+        if self.closed:
+            return
+        self.closed = True
+        self.running = False
+        for item in list(self.item_list):
+            item.Destroy()
+        self.scheduler.clear()
+        self.to_init.clear()
+        if self.physics_world is not None:
+            self.physics_world.destroy()
+            self.physics_world = None
+        if self.render_target is None and rl.is_window_ready():
+            rl.close_window()
+        if Game.instance is self:
+            Game.instance = None
 
     def run_once(self):
         self.update()

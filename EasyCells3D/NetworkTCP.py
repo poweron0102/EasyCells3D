@@ -1,211 +1,186 @@
-import socket
-from typing import Callable, Any
-
-import select
+﻿"""Framed TCP transport with buffered reads and stable peer identifiers."""
+import io
 import pickle
+import select
+import socket
 import threading
-
+from typing import Callable
 from .scheduler import Scheduler
 
 SIZE_SIZE = 4
+MAX_PACKET = 1_048_576
 
+class _DataUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        raise pickle.UnpicklingError("Objects are not allowed in network packets")
+
+def _decode(data):
+    return _DataUnpickler(io.BytesIO(data)).load()
+
+def _send(sock, data):
+    packet = pickle.dumps(data, protocol=4)
+    if len(packet) > MAX_PACKET:
+        raise ValueError("Network packet too large")
+    sock.sendall(len(packet).to_bytes(SIZE_SIZE, "big") + packet)
+
+def _read(sock, buffer):
+    ready, _, _ = select.select([sock], [], [], 0)
+    if ready:
+        chunk = sock.recv(65536)
+        if not chunk:
+            raise ConnectionError("Peer disconnected")
+        buffer.extend(chunk)
+    if len(buffer) < SIZE_SIZE:
+        return None
+    size = int.from_bytes(buffer[:SIZE_SIZE], "big")
+    if not 0 < size <= MAX_PACKET:
+        raise ConnectionError("Invalid packet size")
+    if len(buffer) < SIZE_SIZE + size:
+        return None
+    packet = bytes(buffer[SIZE_SIZE:SIZE_SIZE + size])
+    del buffer[:SIZE_SIZE + size]
+    return _decode(packet)
+
+def _block_read(sock):
+    def exact(size):
+        data = bytearray()
+        while len(data) < size:
+            chunk = sock.recv(size - len(data))
+            if not chunk:
+                raise ConnectionError("Peer disconnected during handshake")
+            data.extend(chunk)
+        return data
+    size = int.from_bytes(exact(SIZE_SIZE), "big")
+    if not 0 < size <= MAX_PACKET:
+        raise ConnectionError("Invalid packet size")
+    return _decode(exact(size))
 
 class NetworkServerTCP:
     def __init__(self, ip: str, port: int, ip_version: int = 4,
-                 connect_callback: Callable[[int], None] = lambda x: None):
-        self.ip = ip
-        self.port = port
-        self.clients: list[socket.socket | None] = [None]
-        if ip_version == 6:
-            self.server_socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        elif ip_version == 4:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        else:
-            raise ValueError("Invalid IP version")
-        self.server_socket.bind((self.ip, self.port))
-        self.server_socket.listen()
+                 connect_callback: Callable = lambda _: None):
+        self.ip, self.port = ip, port
+        self.clients = [None]
+        self._buffers = {}
+        self.running = True
         self.connect_callback = connect_callback
-        print(f"Server running on {(self.ip, self.port)}")
-
-        self.accept_thread = threading.Thread(target=self.accept_clients)
-        # ends the thread when the main program ends
-        self.accept_thread.daemon = True
+        self.scheduler = Scheduler.instance
+        self.server_socket = socket.socket(socket.AF_INET6 if ip_version == 6 else socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind((ip, port))
+        self.server_socket.listen(8)
+        self.accept_thread = threading.Thread(target=self.accept_clients, daemon=True)
         self.accept_thread.start()
 
     def accept_clients(self):
-        while True:
-            client_socket, addr = self.server_socket.accept()
-            print(f"Connection established with {addr}, id: {len(self.clients)}")
-            self.clients.append(client_socket)
+        while self.running:
+            try:
+                peer, _ = self.server_socket.accept()
+                peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                peer.settimeout(.1)
+                cid = len(self.clients)
+                self.clients.append(peer)
+                self._buffers[cid] = bytearray()
+                self.send(cid, cid)
+                self.scheduler.create_task(self._run_connect_callback(cid))
+            except OSError:
+                if not self.running:
+                    break
 
-            client_id = len(self.clients) - 1
-            # Send the client their ID
-            self.send(client_id, client_id)
-
-            Scheduler.instance.create_task(self._run_connect_callback(client_id))
-
-    async def _run_connect_callback(self, client_id: int):
+    async def _run_connect_callback(self, client_id):
         self.connect_callback(client_id)
 
-    def send(self, data: object, client_id: int):
-        data = pickle.dumps(data)
-        size = len(data).to_bytes(SIZE_SIZE, "big")
-        # print(f"Data size: {len(data)}")  # Debug
-
-        self.clients[client_id].sendall(size)
-        self.clients[client_id].sendall(data)
-
-    def read(self, client_id: int) -> Any:
-        client_socket: socket.socket = self.clients[client_id]
-
-        # Use select to check if data is available
-        ready_to_read, _, _ = select.select([client_socket], [], [], 0)
-        if not ready_to_read:
-            return None  # No data available yet
-
-        # Peek into the buffer to check the available data
+    def send(self, data, client_id):
+        if client_id >= len(self.clients) or self.clients[client_id] is None:
+            return
         try:
-            available_data = client_socket.recv(SIZE_SIZE, socket.MSG_PEEK)
-        except ConnectionResetError:
-            exit(1)
-        if len(available_data) < SIZE_SIZE:
-            return None  # Header size not fully available
+            _send(self.clients[client_id], data)
+        except OSError:
+            self.close_client(client_id)
 
-        # Read the size from the available data
-        size = int.from_bytes(available_data[:SIZE_SIZE], "big")
+    def read(self, client_id):
+        if client_id >= len(self.clients) or self.clients[client_id] is None:
+            return None
+        try:
+            data = _read(self.clients[client_id], self._buffers.setdefault(client_id, bytearray()))
+            if data == "close":
+                self.close_client(client_id)
+                return None
+            return data
+        except (OSError, ValueError, pickle.UnpicklingError, EOFError):
+            self.close_client(client_id)
+            return None
 
-        # Check if the full data is available
-        if len(client_socket.recv(size + SIZE_SIZE, socket.MSG_PEEK)) < size + SIZE_SIZE:
-            return None  # Data not fully available yet
+    def block_read(self, client_id):
+        return _block_read(self.clients[client_id])
 
-        # Read the full message from the buffer
-        client_socket.recv(SIZE_SIZE)  # Consume the size header
-        data = client_socket.recv(size)
-        return pickle.loads(data)
+    def broadcast(self, data):
+        for cid in range(1, len(self.clients)):
+            self.send(data, cid)
 
-    def block_read(self, client_id: int) -> Any:
-        client_socket: socket.socket = self.clients[client_id]
-
-        # Read the size from the available data
-        size = int.from_bytes(client_socket.recv(SIZE_SIZE), "big")
-
-        # Read the full message from the buffer
-        data = client_socket.recv(size)
-        return pickle.loads(data)
-
-    def broadcast(self, data: object):
-        for i in range(1, len(self.clients)):
-            self.send(data, i)
+    def close_client(self, client_id):
+        peer = self.clients[client_id]
+        if peer is not None:
+            self.clients[client_id] = None
+            peer.close()
+        self._buffers.pop(client_id, None)
 
     def close(self):
-        for i in range(1, len(self.clients)):
-            self.send("close", i)
-            self.clients[i].close()
-        self.clients = [None]
+        self.running = False
+        for cid in range(1, len(self.clients)):
+            self.close_client(cid)
         self.server_socket.close()
-        print("Server closed")
-
-    def close_client(self, client_id: int):
-        if self.clients[client_id]:
-            self.send("close", client_id)
-            self.clients[client_id].close()
-            self.clients.pop(client_id)
-
 
 class NetworkClientTCP:
     def __init__(self, ip: str, port: int, ip_version: int = 4,
-                 connect_callback: Callable[[int], None] = lambda x: None):
-        self.ip = ip
-        self.port = port
+                 connect_callback: Callable = lambda _: None):
+        self.ip, self.port = ip, port
         self.connect_callback = connect_callback
-
-        if ip_version == 6:
-            self.server_socket = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-        elif ip_version == 4:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        else:
-            raise ValueError("Invalid IP version")
-
-        self.id: int | None = None
-
-        self.connect_thread = threading.Thread(target=self.connect)
-        self.connect_thread.daemon = True
+        self.id = None
+        self.error = ""
+        self.connected = False
+        self._buffer = bytearray()
+        self.server_socket = socket.socket(socket.AF_INET6 if ip_version == 6 else socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.settimeout(5)
+        self.server_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.connect_thread = threading.Thread(target=self.connect, daemon=True)
         self.connect_thread.start()
 
     def connect(self):
-        self.server_socket.connect((self.ip, self.port))
+        try:
+            self.server_socket.connect((self.ip, self.port))
+            self.id = int(self.block_read())
+            self.server_socket.settimeout(.1)
+            self.connected = True
+            self.connect_callback(self.id)
+        except (OSError, ValueError, EOFError, pickle.UnpicklingError) as exc:
+            self.error = str(exc)
+            self.server_socket.close()
 
-        # Get the client ID from the server
-        self.id = int(self.block_read())
-        print(f"Connected to server with id {self.id}")
-        self.connect_callback(self.id)
+    def send(self, data):
+        if not self.connected:
+            return
+        try:
+            _send(self.server_socket, data)
+        except OSError as exc:
+            self.error = str(exc)
+            self.close()
 
-    def send(self, data: object):
-        data = pickle.dumps(data)
-        size = len(data).to_bytes(SIZE_SIZE, "big")
+    def read(self):
+        if not self.connected:
+            return None
+        try:
+            data = _read(self.server_socket, self._buffer)
+            if data == "close":
+                self.close()
+                return None
+            return data
+        except (OSError, ValueError, pickle.UnpicklingError, EOFError) as exc:
+            self.error = str(exc)
+            self.close()
+            return None
 
-        self.server_socket.sendall(size)
-        self.server_socket.sendall(data)
-
-    def read(self) -> Any:
-        # Peek into the buffer to check the available data
-
-        # Use select to check if data is available
-        ready_to_read, _, _ = select.select([self.server_socket], [], [], 0)
-        if not ready_to_read:
-            return None  # No data available yet
-
-        available_data = self.server_socket.recv(SIZE_SIZE, socket.MSG_PEEK)
-        if len(available_data) < SIZE_SIZE:
-            return None  # Header size not fully available
-
-        # Read the size from the available data
-        size = int.from_bytes(available_data[:SIZE_SIZE], "big")
-
-        # Check if the full data is available
-        if len(self.server_socket.recv(size + SIZE_SIZE, socket.MSG_PEEK)) < size + SIZE_SIZE:
-            return None  # Data not fully available yet
-
-        # Read the full message from the buffer
-        self.server_socket.recv(SIZE_SIZE)  # Consume the size header
-        data = self.server_socket.recv(size)
-        return pickle.loads(data)
-
-    def block_read(self) -> Any:
-        # Read the size from the available data
-        size = int.from_bytes(self.server_socket.recv(SIZE_SIZE), "big")
-
-        # Read the full message from the buffer
-        data = self.server_socket.recv(size)
-        return pickle.loads(data)
+    def block_read(self):
+        return _block_read(self.server_socket)
 
     def close(self):
-        self.send("close")
+        self.connected = False
         self.server_socket.close()
-
-# Test
-# IP = "localhost"
-# PORT = 25765
-#
-# is_server = bool(int(input("Server(1) or Client(0): ")))
-#
-# if is_server:
-#     server = NetworkServer(IP, PORT)
-#
-#     while len(server.clients) == 1:
-#         pass
-#
-#     while True:
-#         data = server.read(1)
-#         print(data)
-#         response = input("Response: ")
-#         server.send(response, 1)
-#
-# else:
-#     client = NetworkClient(IP, PORT)
-#
-#     while True:
-#         response = input("Data: ")
-#         client.send(response)
-#         data = client.read()
-#         print(data)

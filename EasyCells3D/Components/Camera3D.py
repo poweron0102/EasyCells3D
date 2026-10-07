@@ -17,7 +17,7 @@ class Renderable3D(Component):
             self.camera.renderables.append(self)
 
     def on_destroy(self):
-        if self in self.camera.renderables:
+        if self.camera and self in self.camera.renderables:
             self.camera.renderables.remove(self)
 
 
@@ -60,6 +60,8 @@ class Camera3D(Component, Camera):
         self.add_to_game(self.game)
 
     def on_destroy(self):
+        if Camera3D.main is self:
+            Camera3D.main = None
         if self in self.game.cameras:
             self.game.cameras.remove(self)
 
