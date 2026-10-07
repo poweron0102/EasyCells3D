@@ -7,8 +7,8 @@ from struct import pack, unpack
 class NetworkTransform(NetworkComponent):
     def __init__(
             self,
-            identifier: int,
-            owner: int,
+            identifier: int | None = None,
+            owner: int = 0,
             sync_frequency: float = 0.015,
             
             sync_x: bool = True,

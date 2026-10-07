@@ -93,7 +93,7 @@ class NetworkComponent(Component):
             if not isinstance(method, staticmethod) and hasattr(method, "_rpc_name"):
                 NetworkComponent._static_rpcs.pop(method._rpc_name, None)
 
-    def __init__(self, identifier: int, owner: int):
+    def __init__(self, identifier: int | None = None, owner: int = 0):
         self.identifier = identifier
         self.owner = owner
 
@@ -101,8 +101,23 @@ class NetworkComponent(Component):
             NetworkComponent._static_instance = self
 
     def init(self):
-        if self.identifier is not None:
-            NetworkComponent._active_components[self.identifier] = self
+        if self.identifier is None:
+            raise RuntimeError("Use NetworkManager.spawn or provide an explicit identifier")
+        self._bind_identity(self.identifier, self.owner)
+
+    def _bind_identity(self, identifier, owner):
+        existing = NetworkComponent._active_components.get(identifier)
+        if existing is not None and existing is not self:
+            raise ValueError(f"Duplicate network component ID: {identifier}")
+        self.identifier, self.owner = identifier, owner
+        NetworkComponent._active_components[identifier] = self
+        for name, variable in vars(self).items():
+            if isinstance(variable, NetworkVariable):
+                variable._bind_identity(variable.var_id if variable.var_id is not None else (identifier, name), owner)
+
+    def on_network_spawn(self):
+        """Called after initialization and application of the server's initial state."""
+        pass
 
     @classmethod
     def get_static_instance(cls):
@@ -112,9 +127,11 @@ class NetworkComponent(Component):
         return cls._static_instance
 
     def on_destroy(self):
-        if self.identifier in NetworkComponent._active_components:
+        if NetworkComponent._active_components.get(self.identifier) is self:
             del NetworkComponent._active_components[self.identifier]
-        self.on_destroy = lambda: None
+        for variable in vars(self).values():
+            if isinstance(variable, NetworkVariable) and NetworkVariable._active_variables.get(variable.var_id) is variable:
+                NetworkVariable._active_variables.pop(variable.var_id, None)
 
     def send_rpc(self, method_name: str, args: tuple, send_to: SendTo, protocol: Protocol, kwargs=None):
         """Encapsula e envia o pacote usando o protocolo especificado."""
@@ -187,20 +204,30 @@ class NetworkVariable[T]:
     """
     _active_variables: WeakValueDictionary[int, 'NetworkVariable'] = WeakValueDictionary()
 
-    def __init__(self, value: T, identifier: int, owner: int, require_owner: bool = True):
+    def __init__(self, value: T, identifier: int | None = None, owner: int | None = None, require_owner: bool = True):
         self.var_id = identifier
-        self.owner = owner
+        self._inherit_owner = owner is None
+        self.owner = 0 if owner is None else owner
         self.require_owner = require_owner
         self._value = value
 
-        NetworkVariable._active_variables[identifier] = self
-
         self._initial_requested = False
+        if identifier is not None:
+            self._bind_identity(identifier, self.owner)
+
+    def _bind_identity(self, identifier, owner):
+        existing = NetworkVariable._active_variables.get(identifier)
+        if existing is not None and existing is not self:
+            raise ValueError(f"Duplicate network variable ID: {identifier}")
+        self.var_id = identifier
+        if self._inherit_owner:
+            self.owner = owner
+        NetworkVariable._active_variables[identifier] = self
         self._request_initial_value()
 
     def _request_initial_value(self):
         nm = NetworkManager.instance
-        if nm is not None and not nm.is_server and nm._tcp_connected and not self._initial_requested:
+        if self.var_id is not None and nm is not None and not nm.is_server and nm._tcp_connected and not self._initial_requested:
             nm.send_to_server((OP_VAR, self.var_id, VAR_GET, ()), Protocol.TCP)
             self._initial_requested = True
 
@@ -211,8 +238,8 @@ class NetworkVariable[T]:
     @value.setter
     def value(self, new_value: T):
         nm = NetworkManager.instance
-        if nm is None:
-            raise RuntimeError("NetworkManager is not initialized")
+        if nm is None or self.var_id is None:
+            raise RuntimeError("NetworkVariable is not initialized; use spawn or an explicit identifier")
         if not nm.is_server and self.require_owner and nm.id != self.owner:
             raise PermissionError("Only the owner or server can write this NetworkVariable")
         self._value = new_value

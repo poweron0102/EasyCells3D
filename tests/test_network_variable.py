@@ -33,6 +33,7 @@ class VariableTests(unittest.TestCase):
                 value = NetworkVariable(100, 10, owner=owner, require_owner=require_owner)
                 value.value = 80
                 self.assertEqual(value.value, 80)
+                del value
 
     def test_remote_unauthorized_write_is_rejected_and_corrected(self):
         self.network.is_server = True
