@@ -3,6 +3,7 @@ import io
 import pickle
 import select
 import socket
+import secrets
 import threading
 from typing import Callable
 from collections import deque
@@ -73,6 +74,7 @@ class NetworkServerTCP(_ConnectionEvents):
         self.ip, self.port = ip, port
         self.clients = [None]
         self._buffers = {}
+        self.peer_tokens = {}
         self.running = True
         super().__init__(connect_callback)
         self.server_socket = socket.socket(socket.AF_INET6 if ip_version == 6 else socket.AF_INET, socket.SOCK_STREAM)
@@ -90,7 +92,8 @@ class NetworkServerTCP(_ConnectionEvents):
                 cid = len(self.clients)
                 self.clients.append(peer)
                 self._buffers[cid] = bytearray()
-                self.send(cid, cid)
+                self.peer_tokens[cid] = secrets.token_bytes(32)
+                self.send((cid, self.peer_tokens[cid]), cid)
                 self._connect_events.append(cid)
             except OSError:
                 if not self.running:
@@ -131,6 +134,7 @@ class NetworkServerTCP(_ConnectionEvents):
             self.clients[client_id] = None
             peer.close()
         self._buffers.pop(client_id, None)
+        self.peer_tokens.pop(client_id, None)
 
     def close(self):
         self._connect_events.clear()
@@ -145,6 +149,7 @@ class NetworkClientTCP(_ConnectionEvents):
         self.ip, self.port = ip, port
         super().__init__(connect_callback)
         self.id = None
+        self.session_token = None
         self.error = ""
         self.connected = False
         self._buffer = bytearray()
@@ -157,11 +162,15 @@ class NetworkClientTCP(_ConnectionEvents):
     def connect(self):
         try:
             self.server_socket.connect((self.ip, self.port))
-            self.id = int(self.block_read())
+            client_id, token = self.block_read()
+            if type(client_id) is not int or client_id <= 0 or not isinstance(token, bytes) or len(token) != 32:
+                raise ValueError("Invalid TCP session handshake")
+            self.session_token = token
+            self.id = client_id
             self.server_socket.settimeout(.1)
             self.connected = True
             self._connect_events.append(self.id)
-        except (OSError, ValueError, EOFError, pickle.UnpicklingError) as exc:
+        except (OSError, ValueError, TypeError, EOFError, pickle.UnpicklingError) as exc:
             self.error = str(exc)
             self.server_socket.close()
 
@@ -195,4 +204,5 @@ class NetworkClientTCP(_ConnectionEvents):
     def close(self):
         self._connect_events.clear()
         self.connected = False
+        self.session_token = None
         self.server_socket.close()

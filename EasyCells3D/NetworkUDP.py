@@ -1,4 +1,6 @@
 import socket
+import hmac
+import struct
 from typing import Callable, Any
 import pickle
 import threading
@@ -8,14 +10,57 @@ from collections import deque
 from EasyCells3D.NetworkTCP import _decode, _ConnectionEvents
 
 
+class _DatagramSession:
+    """Authenticate direction, peer and sequence before decoding the payload."""
+    header = struct.Struct("!IQ")
+
+    def __init__(self, peer_id, token, is_server):
+        self.peer_id, self.token = peer_id, token
+        self.outgoing = b"S" if is_server else b"C"
+        self.incoming = b"C" if is_server else b"S"
+        self.sequence = 0
+        self.latest = 0
+        self.seen = 0
+        self.lock = threading.Lock()
+
+    def encode(self, message):
+        with self.lock:
+            self.sequence += 1
+            body = self.header.pack(self.peer_id, self.sequence) + pickle.dumps(message, protocol=4)
+            return body + hmac.digest(self.token, self.outgoing + body, "sha256")
+
+    def decode(self, packet):
+        if len(packet) < self.header.size + 32:
+            raise ValueError("Invalid UDP envelope")
+        body, tag = packet[:-32], packet[-32:]
+        if not hmac.compare_digest(tag, hmac.digest(self.token, self.incoming + body, "sha256")):
+            raise ValueError("Invalid UDP authentication")
+        peer_id, sequence = self.header.unpack_from(body)
+        if peer_id != self.peer_id or sequence == 0:
+            raise ValueError("Invalid UDP peer or sequence")
+        age = self.latest - sequence
+        if age >= 64 or (age >= 0 and self.seen & (1 << age)):
+            raise ValueError("Replayed UDP packet")
+        message = _decode(body[self.header.size:])
+        if sequence > self.latest:
+            self.seen = (self.seen << min(sequence - self.latest, 64)) & ((1 << 64) - 1)
+            self.latest = sequence
+            age = 0
+        self.seen |= 1 << age
+        return message
+
+
 class NetworkServerUDP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable[[int], None] = lambda x: None,
-                 peer_exists: Callable[[int], bool] | None = None):
+                 peer_token: Callable[[int], bytes | None] | None = None):
         self.ip = ip
         self.port = port
         self.ip_version = ip_version
-        self.peer_exists = peer_exists
+        if peer_token is None:
+            raise ValueError("UDP requires a TCP session token provider")
+        self.peer_token = peer_token
+        self._sessions = {}
 
         # Clients list stores tuples of (ip, port)
         # Index 0 is reserved/None to match original 1-based logic
@@ -55,39 +100,34 @@ class NetworkServerUDP(_ConnectionEvents):
                 # This blocks until data is received.
                 data, addr = self.server_socket.recvfrom(65535)
 
-                msg = _decode(data)
-                handshake = msg == "HANDSHAKE" or (
-                    isinstance(msg, tuple) and len(msg) == 2 and msg[0] == "HANDSHAKE")
-                if handshake:
-                    client_id = msg[1] if isinstance(msg, tuple) else self.client_map.get(addr, len(self.clients))
-                    if not isinstance(client_id, int) or client_id <= 0:
+                if len(data) < _DatagramSession.header.size + 32:
+                    continue
+                client_id, _ = _DatagramSession.header.unpack_from(data)
+                token = self.peer_token(client_id)
+                if token is None:
+                    continue
+                session = self._sessions.get(client_id)
+                if session is None or session.token != token:
+                    session = _DatagramSession(client_id, token, True)
+                msg = session.decode(data)
+                if msg == "HANDSHAKE":
+                    previous = self._sessions.get(client_id)
+                    if previous is not None and previous.token != token:
+                        self.close_client(client_id)
+                    if addr in self.client_map and self.client_map[addr] != client_id:
                         continue
-                    if self.peer_exists is not None and (
-                            msg == "HANDSHAKE" or not self.peer_exists(client_id)):
+                    if client_id < len(self.clients) and self.clients[client_id] not in (None, addr):
                         continue
-                    if addr in self.client_map:
-                        if self.client_map[addr] == client_id:
-                            self.send(client_id, client_id)
-                        continue
-                    # --- New Client Handling ---
-                    if client_id < len(self.clients) and self.clients[client_id] is not None:
-                        continue
-                    self.clients.extend([None] * max(0, client_id + 1 - len(self.clients)))
-                    self.clients[client_id] = addr
-                    self.client_map[addr] = client_id
-                    self.msg_queues[client_id] = deque()
-
-                    print(f"Connection (UDP) established with {addr}, id: {client_id}")
-
-                    # Send the client their ID
+                    if client_id not in self._sessions:
+                        self.clients.extend([None] * max(0, client_id + 1 - len(self.clients)))
+                        self.clients[client_id] = addr
+                        self.client_map[addr] = client_id
+                        self.msg_queues[client_id] = deque()
+                        self._sessions[client_id] = session
+                        self._connect_events.append(client_id)
                     self.send(client_id, client_id)
-
-                    self._connect_events.append(client_id)
-
-                else:
-                    queue = self.msg_queues.get(self.client_map.get(addr))
-                    if queue is not None:
-                        queue.append(msg)
+                elif self.client_map.get(addr) == client_id and self._sessions.get(client_id) is session:
+                    self.msg_queues[client_id].append(msg)
 
             except (pickle.UnpicklingError, EOFError, ValueError, TypeError):
                 continue
@@ -105,7 +145,7 @@ class NetworkServerUDP(_ConnectionEvents):
         try:
             # UDP preserves boundaries, so we don't need a size header.
             # However, data must fit in one packet (approx 64k).
-            serialized = pickle.dumps(data)
+            serialized = self._sessions[client_id].encode(data)
             self.server_socket.sendto(serialized, addr)
         except Exception as e:
             print(f"Send error to {client_id}: {e}")
@@ -151,16 +191,22 @@ class NetworkServerUDP(_ConnectionEvents):
             if client_id in self.msg_queues:
                 del self.msg_queues[client_id]
             self.clients[client_id] = None
+            self._sessions.pop(client_id, None)
 
 
 class NetworkClientUDP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
                  connect_callback: Callable[[int], None] = lambda x: None,
-                 peer_id: Callable[[], int | None] | None = None):
+                 peer_id: Callable[[], int | None] | None = None,
+                 peer_token: Callable[[], bytes | None] | None = None):
         self.ip = ip
         self.port = port
         super().__init__(connect_callback)
+        if peer_id is None or peer_token is None:
+            raise ValueError("UDP requires TCP peer and session token providers")
         self.peer_id = peer_id
+        self.peer_token = peer_token
+        self._session = None
 
         if ip_version == 6:
             self.server_socket = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
@@ -183,14 +229,15 @@ class NetworkClientUDP(_ConnectionEvents):
             self.server_socket.connect((self.ip, self.port))
             self.server_socket.settimeout(.5)
             deadline = time.monotonic() + 5
-            while self.peer_id is not None and self.peer_id() is None:
+            while self.peer_id() is None or self.peer_token() is None:
                 if not self.running:
                     return
                 if time.monotonic() >= deadline:
                     self.error = "TCP handshake timed out"
                     return
                 time.sleep(.01)
-            handshake = ("HANDSHAKE", self.peer_id()) if self.peer_id is not None else "HANDSHAKE"
+            self._session = _DatagramSession(self.peer_id(), self.peer_token(), False)
+            handshake = "HANDSHAKE"
             for _ in range(10):
                 if not self.running:
                     return
@@ -199,17 +246,20 @@ class NetworkClientUDP(_ConnectionEvents):
                     deadline = time.monotonic() + .5
                     while time.monotonic() < deadline:
                         self.server_socket.settimeout(max(.001, deadline-time.monotonic()))
-                        reply = self.block_read()
+                        try:
+                            reply = self.block_read()
+                        except (ValueError, pickle.UnpicklingError, EOFError):
+                            continue
                         # A lost ACK can leave gameplay datagrams ahead of the retry's ACK.
-                        if isinstance(reply, int) and (self.peer_id is None or reply == self.peer_id()):
-                            self.id = reply
+                        if type(reply) is int and reply == self.peer_id():
                             self.server_socket.settimeout(None)
+                            self.id = reply
                             self._connect_events.append(self.id)
                             return
                 except (TimeoutError, ConnectionResetError):
                     continue
             self.error = "UDP handshake timed out"
-        except (OSError, ValueError, pickle.UnpicklingError) as exc:
+        except (OSError, ValueError, EOFError, pickle.UnpicklingError) as exc:
             self.error = str(exc)
 
     def send(self, data: object):
@@ -218,7 +268,9 @@ class NetworkClientUDP(_ConnectionEvents):
         if self.id is None and data != "HANDSHAKE" and not (
                 isinstance(data, tuple) and len(data) == 2 and data[0] == "HANDSHAKE"):
             return
-        serialized = pickle.dumps(data)
+        if self._session is None:
+            return
+        serialized = self._session.encode(data)
         try:
             self.server_socket.sendall(serialized)
         except OSError as exc:
@@ -236,21 +288,21 @@ class NetworkClientUDP(_ConnectionEvents):
 
         try:
             data, _ = self.server_socket.recvfrom(65535)
-            message = _decode(data)
+            message = self._session.decode(data)
             if isinstance(message, int):
                 return None  # A repeated handshake acknowledgement.
             if message == "close":
                 self.running = False
                 return None
             return message
-        except (OSError, pickle.UnpicklingError, EOFError):
+        except (OSError, ValueError, pickle.UnpicklingError, EOFError):
             # UDP ICMP Port Unreachable can sometimes trigger this on Windows
             return None
 
     def block_read(self) -> Any:
         # Blocking read
         data, _ = self.server_socket.recvfrom(65535)
-        return _decode(data)
+        return self._session.decode(data)
 
     def close(self):
         self._connect_events.clear()

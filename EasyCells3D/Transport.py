@@ -66,8 +66,9 @@ class UdpTransport(_BaseTransport):
                  callback: Callable[[int], None], tcp: TcpTransport | None = None):
         self.is_server = is_server
         if is_server:
-            peer_exists = (lambda cid: cid < len(tcp.clients) and tcp.clients[cid] is not None) if tcp else None
-            self._impl = NetworkServerUDP(ip, port, ip_version, callback, peer_exists)
+            peer_token = (lambda cid: tcp._impl.peer_tokens.get(cid)) if tcp else None
+            self._impl = NetworkServerUDP(ip, port, ip_version, callback, peer_token)
         else:
             peer_id = (lambda: tcp._impl.id) if tcp else None
-            self._impl = NetworkClientUDP(ip, port, ip_version, callback, peer_id)
+            peer_token = (lambda: tcp._impl.session_token) if tcp else None
+            self._impl = NetworkClientUDP(ip, port, ip_version, callback, peer_id, peer_token)
