@@ -10,6 +10,7 @@ from collections import deque
 
 SIZE_SIZE = 4
 MAX_PACKET = 1_048_576
+MAX_PEER_ID = 65535
 
 class _DataUnpickler(pickle.Unpickler):
     def find_class(self, module, name):
@@ -25,12 +26,16 @@ def _send(sock, data):
     sock.sendall(len(packet).to_bytes(SIZE_SIZE, "big") + packet)
 
 def _read(sock, buffer):
-    ready, _, _ = select.select([sock], [], [], 0)
-    if ready:
-        chunk = sock.recv(65536)
-        if not chunk:
-            raise ConnectionError("Peer disconnected")
-        buffer.extend(chunk)
+    size = int.from_bytes(buffer[:SIZE_SIZE], "big") if len(buffer) >= SIZE_SIZE else None
+    if size is not None and not 0 < size <= MAX_PACKET:
+        raise ConnectionError("Invalid packet size")
+    if size is None or len(buffer) < SIZE_SIZE + size:
+        ready, _, _ = select.select([sock], [], [], 0)
+        if ready:
+            chunk = sock.recv(65536)
+            if not chunk:
+                raise ConnectionError("Peer disconnected")
+            buffer.extend(chunk)
     if len(buffer) < SIZE_SIZE:
         return None
     size = int.from_bytes(buffer[:SIZE_SIZE], "big")
@@ -70,8 +75,11 @@ class _ConnectionEvents:
 
 class NetworkServerTCP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,
-                 connect_callback: Callable = lambda _: None):
+                 connect_callback: Callable = lambda _: None, *, max_clients: int = 64):
         self.ip, self.port = ip, port
+        if not 1 <= max_clients <= MAX_PEER_ID:
+            raise ValueError("max_clients must be between 1 and 65535")
+        self.max_clients = max_clients
         self.clients = [None]
         self._buffers = {}
         self.peer_tokens = {}
@@ -79,7 +87,8 @@ class NetworkServerTCP(_ConnectionEvents):
         super().__init__(connect_callback)
         self.server_socket = socket.socket(socket.AF_INET6 if ip_version == 6 else socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.bind((ip, port))
-        self.server_socket.listen(8)
+        self.server_socket.listen(min(max_clients, 128))
+        self.server_socket.settimeout(.1)
         self.accept_thread = threading.Thread(target=self.accept_clients, daemon=True)
         self.accept_thread.start()
 
@@ -89,18 +98,30 @@ class NetworkServerTCP(_ConnectionEvents):
                 peer, _ = self.server_socket.accept()
                 peer.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 peer.settimeout(.1)
+                if len(self._buffers) >= self.max_clients or len(self.clients) > MAX_PEER_ID:
+                    peer.close()
+                    continue
                 cid = len(self.clients)
-                self.clients.append(peer)
+                token = secrets.token_bytes(32)
+                try:
+                    _send(peer, (cid, token))
+                except OSError:
+                    peer.close()
+                    continue
+                if not self.running:
+                    peer.close()
+                    break
                 self._buffers[cid] = bytearray()
-                self.peer_tokens[cid] = secrets.token_bytes(32)
-                self.send((cid, self.peer_tokens[cid]), cid)
+                self.peer_tokens[cid] = token
+                self.clients.append(peer)
                 self._connect_events.append(cid)
+
             except OSError:
                 if not self.running:
                     break
 
     def send(self, data, client_id):
-        if client_id >= len(self.clients) or self.clients[client_id] is None:
+        if not 0 < client_id < len(self.clients) or self.clients[client_id] is None:
             return
         try:
             _send(self.clients[client_id], data)
@@ -109,7 +130,7 @@ class NetworkServerTCP(_ConnectionEvents):
 
     def read(self, client_id):
         self.poll_events()
-        if client_id >= len(self.clients) or self.clients[client_id] is None:
+        if not 0 < client_id < len(self.clients) or self.clients[client_id] is None:
             return None
         try:
             data = _read(self.clients[client_id], self._buffers.setdefault(client_id, bytearray()))
@@ -129,6 +150,12 @@ class NetworkServerTCP(_ConnectionEvents):
             self.send(data, cid)
 
     def close_client(self, client_id):
+        if not 0 < client_id < len(self.clients):
+            return
+        try:
+            self._connect_events.remove(client_id)
+        except ValueError:
+            pass
         peer = self.clients[client_id]
         if peer is not None:
             self.clients[client_id] = None
@@ -139,9 +166,11 @@ class NetworkServerTCP(_ConnectionEvents):
     def close(self):
         self._connect_events.clear()
         self.running = False
+        self.server_socket.close()
+        self.accept_thread.join(timeout=1)
         for cid in range(1, len(self.clients)):
             self.close_client(cid)
-        self.server_socket.close()
+        self._connect_events.clear()
 
 class NetworkClientTCP(_ConnectionEvents):
     def __init__(self, ip: str, port: int, ip_version: int = 4,

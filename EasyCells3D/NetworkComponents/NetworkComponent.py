@@ -260,6 +260,7 @@ class NetworkManager(Component):
             connect_callback: Callable[[int], None] = None,
             enable_udp: bool = True,
             disconnect_callback: Callable[[int], None] = None,
+            max_clients: int = 64,
     ):
         self.is_server = is_server
         self.ip = ip
@@ -273,6 +274,7 @@ class NetworkManager(Component):
         if connect_callback is not None:
             self.connect_callbacks.append(connect_callback)
 
+        self.max_clients = max_clients
         self.enable_udp = enable_udp
         self._tcp_connected = False
         self._udp_connected = False
@@ -356,7 +358,8 @@ class NetworkManager(Component):
         # Inicializa AMBOS os protocolos atrás da interface Transport
         self.transports = {
             Protocol.TCP: TcpTransport(self.ip, self.port, ip_version, self.is_server,
-                self.server_callback_tcp if self.is_server else self.client_callback_tcp),
+                self.server_callback_tcp if self.is_server else self.client_callback_tcp,
+                max_clients=self.max_clients),
         }
         if self.enable_udp:
             if self.is_server and self.port == 0:

@@ -55,10 +55,11 @@ class _BaseTransport(Transport):
 
 class TcpTransport(_BaseTransport):
     def __init__(self, ip: str, port: int, ip_version: int, is_server: bool,
-                 callback: Callable[[int], None]):
+                 callback: Callable[[int], None], *, max_clients: int = 64):
         self.is_server = is_server
+        options = {"max_clients": max_clients} if is_server else {}
         self._impl = (NetworkServerTCP if is_server else NetworkClientTCP)(
-            ip, port, ip_version, callback)
+            ip, port, ip_version, callback, **options)
 
 
 class UdpTransport(_BaseTransport):
