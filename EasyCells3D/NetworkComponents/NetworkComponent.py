@@ -465,6 +465,8 @@ class NetworkManager(Component):
                 call(client_id)
 
     def server_callback_tcp(self, client_id: int):
+        for identifier, obj in list(self._spawned.items()):
+            self.send_to_client((OP_SPAWN, identifier, obj.prefab, obj.snapshot()), client_id, Protocol.TCP)
         # Notifica nova conexão TCP
         for call in self.connect_callbacks:
             call(client_id)

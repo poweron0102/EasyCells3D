@@ -169,6 +169,22 @@ class SpawnTests(unittest.TestCase):
             self.assertEqual(copy.GetComponent(NetworkTransform).identifier, original.identifier)
             self.assertEqual(copy.transform.x, 7)
 
+    def test_late_join_receives_current_state_not_factory_defaults(self):
+        with self.server.active() as manager:
+            item = manager.spawn('player', x=3, owner=1)
+            self.server.game.flush_init()
+            item.transform.x = 12
+            item.GetComponent(Player).health.value = 75
+            self.server.output.sent.clear()
+            manager.server_callback_tcp(1)
+        self.deliver()
+        with self.client.active() as manager:
+            self.assertEqual(len(manager.spawned), 1)
+            copy = next(iter(manager.spawned.values()))
+            self.assertEqual(copy.transform.x, 12)
+            self.assertEqual(copy.GetComponent(Player).health.value, 75)
+            self.assertEqual(copy.GetComponent(Player).spawn_health, 75)
+
     def test_unknown_factory_is_not_imported_or_executed(self):
         with self.server.active() as manager:
             with self.assertRaises(KeyError):
