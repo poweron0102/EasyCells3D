@@ -1,4 +1,5 @@
 import socket
+import errno
 import hmac
 import struct
 from typing import Callable, Any
@@ -77,6 +78,7 @@ class NetworkServerUDP(_ConnectionEvents):
             raise ValueError("max_queue must be positive")
         self.max_queue = max_queue
         self._sessions = {}
+        self._lock = threading.RLock()
 
         # Clients list stores tuples of (ip, port)
         # Index 0 is reserved/None to match original 1-based logic
@@ -95,8 +97,12 @@ class NetworkServerUDP(_ConnectionEvents):
         else:
             raise ValueError("Invalid IP version")
 
-        self.server_socket.bind((self.ip, self.port))
-        self.server_socket.settimeout(.1)
+        try:
+            self.server_socket.bind((self.ip, self.port))
+            self.server_socket.settimeout(.1)
+        except OSError:
+            self.server_socket.close()
+            raise
         super().__init__(connect_callback)
         print(f"UDP Server running on {(self.ip, self.port)}")
 
@@ -113,40 +119,42 @@ class NetworkServerUDP(_ConnectionEvents):
         """
         while self.running:
             try:
-                # 65535 is the theoretical max UDP packet size.
-                # This blocks until data is received.
+                # Read one extra byte to detect oversized datagrams on platforms that truncate.
                 data, addr = self.server_socket.recvfrom(MAX_DATAGRAM + 1)
 
-                if not _DatagramSession.header.size + 32 <= len(data) <= MAX_DATAGRAM:
-                    continue
-                client_id, _ = _DatagramSession.header.unpack_from(data)
-                if not 0 < client_id <= MAX_PEER_ID:
-                    continue
-                token = self.peer_token(client_id)
-                if token is None:
-                    continue
-                session = self._sessions.get(client_id)
-                if session is None or session.token != token:
-                    session = _DatagramSession(client_id, token, True)
-                msg = session.decode(data)
-                if msg == "HANDSHAKE":
-                    previous = self._sessions.get(client_id)
-                    if previous is not None and previous.token != token:
-                        self.close_client(client_id)
-                    if addr in self.client_map and self.client_map[addr] != client_id:
+                with self._lock:
+                    if not self.running:
+                        break
+                    if not _DatagramSession.header.size + 32 <= len(data) <= MAX_DATAGRAM:
                         continue
-                    if client_id < len(self.clients) and self.clients[client_id] not in (None, addr):
+                    client_id, _ = _DatagramSession.header.unpack_from(data)
+                    if not 0 < client_id <= MAX_PEER_ID:
                         continue
-                    if client_id not in self._sessions:
-                        self.clients.extend([None] * max(0, client_id + 1 - len(self.clients)))
-                        self.clients[client_id] = addr
-                        self.client_map[addr] = client_id
-                        self.msg_queues[client_id] = deque(maxlen=self.max_queue)
-                        self._sessions[client_id] = session
-                        self._connect_events.append(client_id)
-                    self.send(client_id, client_id)
-                elif self.client_map.get(addr) == client_id and self._sessions.get(client_id) is session:
-                    self.msg_queues[client_id].append(msg)
+                    token = self.peer_token(client_id)
+                    if token is None:
+                        continue
+                    session = self._sessions.get(client_id)
+                    if session is None or session.token != token:
+                        session = _DatagramSession(client_id, token, True)
+                    msg = session.decode(data)
+                    if msg == "HANDSHAKE":
+                        previous = self._sessions.get(client_id)
+                        if previous is not None and previous.token != token:
+                            self.close_client(client_id)
+                        if addr in self.client_map and self.client_map[addr] != client_id:
+                            continue
+                        if client_id < len(self.clients) and self.clients[client_id] not in (None, addr):
+                            continue
+                        if client_id not in self._sessions:
+                            self.clients.extend([None] * max(0, client_id + 1 - len(self.clients)))
+                            self.clients[client_id] = addr
+                            self.client_map[addr] = client_id
+                            self.msg_queues[client_id] = deque(maxlen=self.max_queue)
+                            self._sessions[client_id] = session
+                            self._connect_events.append(client_id)
+                        self.send(client_id, client_id)
+                    elif self.client_map.get(addr) == client_id and self._sessions.get(client_id) is session:
+                        self.msg_queues[client_id].append(msg)
 
             except (pickle.UnpicklingError, EOFError, ValueError, TypeError):
                 continue
@@ -154,19 +162,21 @@ class NetworkServerUDP(_ConnectionEvents):
                 continue
             except ConnectionResetError:
                 continue  # Windows may report a departed UDP peer on the shared socket.
-            except OSError:
-                # Socket likely closed
+            except OSError as exc:
+                if self.running and (exc.errno == errno.EMSGSIZE or getattr(exc, "winerror", None) == 10040):
+                    continue
                 break
 
     def send(self, data: object, client_id: int):
-        if not 0 < client_id < len(self.clients) or self.clients[client_id] is None:
-            return
+        with self._lock:
+            if not 0 < client_id < len(self.clients) or self.clients[client_id] is None:
+                return
 
-        addr = self.clients[client_id]
-        serialized = self._sessions[client_id].encode(data)
+            addr = self.clients[client_id]
+            serialized = self._sessions[client_id].encode(data)
         try:
             # UDP preserves boundaries, so we don't need a size header.
-            # However, data must fit in one packet (approx 64k).
+            # The authenticated envelope is limited to MAX_DATAGRAM.
             self.server_socket.sendto(serialized, addr)
         except Exception as e:
             print(f"Send error to {client_id}: {e}")
@@ -211,17 +221,20 @@ class NetworkServerUDP(_ConnectionEvents):
         self._sessions.clear()
         self.msg_queues.clear()
         self.client_map.clear()
+        self.clients = [None]
 
     def close_client(self, client_id: int):
-        if 0 < client_id < len(self.clients) and self.clients[client_id]:
-            self.send("close", client_id)
-            addr = self.clients[client_id]
-            if addr in self.client_map:
-                del self.client_map[addr]
-            if client_id in self.msg_queues:
-                del self.msg_queues[client_id]
-            self.clients[client_id] = None
-            self._sessions.pop(client_id, None)
+        with self._lock:
+            try:
+                self._connect_events.remove(client_id)
+            except ValueError:
+                pass
+            if 0 < client_id < len(self.clients) and self.clients[client_id]:
+                self.send("close", client_id)
+                self.client_map.pop(self.clients[client_id], None)
+                self.msg_queues.pop(client_id, None)
+                self.clients[client_id] = None
+                self._sessions.pop(client_id, None)
 
 
 class NetworkClientUDP(_ConnectionEvents):

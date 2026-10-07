@@ -62,6 +62,44 @@ class UdpLimitsTests(unittest.TestCase):
         with patch('EasyCells3D.NetworkUDP.time.monotonic', return_value=receiver.receive_window + 2):
             self.assertEqual(receiver.decode(sender.encode('resumed')), 'resumed')
 
+    def test_oversized_windows_datagram_does_not_stop_receiver(self):
+        key = b'a' * 32
+        client = _DatagramSession(1, key, False)
+        oversized = OSError('message too large')
+        oversized.winerror = 10040
+        packets = iter([oversized, client.encode('HANDSHAKE'), client.encode(('valid',))])
+
+        class Socket:
+            def bind(self, address): pass
+            def settimeout(self, timeout): pass
+            def sendto(self, data, address): pass
+            def close(self): pass
+            def recvfrom(self, size):
+                try:
+                    data = next(packets)
+                except StopIteration:
+                    raise OSError('end')
+                if isinstance(data, OSError):
+                    raise data
+                return data, ('127.0.0.1', 5000)
+
+        with patch('EasyCells3D.NetworkUDP.socket.socket', return_value=Socket()), patch(
+                'EasyCells3D.NetworkUDP.threading.Thread'):
+            server = NetworkServerUDP('127.0.0.1', 0, peer_token=lambda _: key)
+            server.receive_loop()
+            self.assertEqual(server.read(1), ('valid',))
+            server.close()
+
+    def test_failed_bind_closes_created_socket(self):
+        for constructor, kwargs, module in (
+                (NetworkServerTCP, {}, 'EasyCells3D.NetworkTCP'),
+                (NetworkServerUDP, {'peer_token': lambda _: b'a' * 32}, 'EasyCells3D.NetworkUDP')):
+            with self.subTest(transport=module), patch(module + '.socket.socket') as socket_factory:
+                socket_factory.return_value.bind.side_effect = OSError('port in use')
+                with self.assertRaises(OSError):
+                    constructor('127.0.0.1', 5000, **kwargs)
+                socket_factory.return_value.close.assert_called_once()
+
     def test_queue_retains_only_latest_messages(self):
         key = b'a' * 32
         client = _DatagramSession(1, key, False)
@@ -84,6 +122,7 @@ class UdpLimitsTests(unittest.TestCase):
                                       max_queue=2)
             server.receive_loop()
             self.assertEqual(list(server.msg_queues[1]), [3, 4])
+            server.close()
             server.close()
 
 

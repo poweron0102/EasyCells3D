@@ -70,7 +70,11 @@ class _ConnectionEvents:
 
     def poll_events(self):
         for _ in range(len(self._connect_events)):
-            self.connect_callback(self._connect_events.popleft())
+            try:
+                client_id = self._connect_events.popleft()
+            except IndexError:
+                break
+            self.connect_callback(client_id)
 
 
 class NetworkServerTCP(_ConnectionEvents):
@@ -86,9 +90,13 @@ class NetworkServerTCP(_ConnectionEvents):
         self.running = True
         super().__init__(connect_callback)
         self.server_socket = socket.socket(socket.AF_INET6 if ip_version == 6 else socket.AF_INET, socket.SOCK_STREAM)
-        self.server_socket.bind((ip, port))
-        self.server_socket.listen(min(max_clients, 128))
-        self.server_socket.settimeout(.1)
+        try:
+            self.server_socket.bind((ip, port))
+            self.server_socket.listen(min(max_clients, 128))
+            self.server_socket.settimeout(.1)
+        except OSError:
+            self.server_socket.close()
+            raise
         self.accept_thread = threading.Thread(target=self.accept_clients, daemon=True)
         self.accept_thread.start()
 
