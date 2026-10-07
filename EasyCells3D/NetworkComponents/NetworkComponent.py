@@ -50,42 +50,21 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
     """
 
     def decorator(func: Callable):
-        if func.__qualname__ != func.__name__:
-            pass
+        is_static = isinstance(func, staticmethod)
+        if is_static:
+            func = func.__func__
+        rpc_name = f"{func.__module__}.{func.__qualname__}"
 
         @wraps(func)
         def wrapper(*args, **kwargs):
-            instance = None
-            if args and isinstance(args[0], NetworkComponent):
-                instance = args[0]
-
-            # --- Caminho de Instância ---
-            if instance:
-                if not getattr(instance, "_is_executing_rpc", False):
-                    # Passa o protocolo definido para o send_rpc
-                    instance.send_rpc(func.__name__, args[1:], send_to, protocol, kwargs)
-
-                    if NetworkManager.instance.is_server and _rpc_recipient(send_to, 0, 0, instance.owner):
-                        return func(instance, *args[1:], **kwargs)
-                    return None
-
-                return func(instance, *args[1:], **kwargs)
-
-            # --- Caminho Estático / Função Livre ---
-            else:
-                static_comp = NetworkComponent.get_static_instance()
-
-                if func.__name__ not in NetworkComponent._static_rpcs:
-                    NetworkComponent._static_rpcs[func.__name__] = func
-
-                if not getattr(static_comp, "_is_executing_rpc", False):
-                    static_comp.send_rpc(func.__name__, args, send_to, protocol, kwargs)
-
-                    if NetworkManager.instance.is_server and _rpc_recipient(send_to, 0, 0, static_comp.owner):
-                        return func(*args, **kwargs)
-                    return None
-
+            instance = args[0] if args and isinstance(args[0], NetworkComponent) else None
+            component = instance if instance is not None else NetworkComponent.get_static_instance()
+            method_name = func.__name__ if instance is not None else rpc_name
+            call_args = args[1:] if instance is not None else args
+            component.send_rpc(method_name, call_args, send_to, protocol, kwargs)
+            if NetworkManager.instance.is_server and _rpc_recipient(send_to, 0, 0, component.owner):
                 return func(*args, **kwargs)
+            return None
 
         wrapper._rpc_config = {
             "send_to": send_to,
@@ -93,9 +72,10 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
             "protocol": protocol  # Salva a config do protocolo
         }
 
-        NetworkComponent._static_rpcs[func.__name__] = wrapper
+        wrapper._rpc_name = rpc_name
+        NetworkComponent._static_rpcs[rpc_name] = wrapper
 
-        return wrapper
+        return staticmethod(wrapper) if is_static else wrapper
 
     return decorator
 
@@ -105,10 +85,16 @@ class NetworkComponent(Component):
     _static_instance: "NetworkComponent" = None
     _static_rpcs: dict[str, Callable] = {}
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # Instance RPCs are addressed by component ID; only static functions use this registry.
+        for method in cls.__dict__.values():
+            if not isinstance(method, staticmethod) and hasattr(method, "_rpc_name"):
+                NetworkComponent._static_rpcs.pop(method._rpc_name, None)
+
     def __init__(self, identifier: int, owner: int):
         self.identifier = identifier
         self.owner = owner
-        self._is_executing_rpc = False
 
         if identifier == STATIC_NET_ID:
             NetworkComponent._static_instance = self
@@ -121,7 +107,7 @@ class NetworkComponent(Component):
     def get_static_instance(cls):
         if cls._static_instance is None:
             cls._static_instance = NetworkComponent(STATIC_NET_ID, 0)
-            cls._active_components[STATIC_NET_ID] = cls._static_instance
+        cls._active_components[STATIC_NET_ID] = cls._static_instance
         return cls._static_instance
 
     def on_destroy(self):
@@ -170,11 +156,11 @@ class NetworkComponent(Component):
 
         if not NetworkManager.instance.is_server or _rpc_recipient(
                 config["send_to"], 0, sender_id, self.owner):
-            try:
-                self._is_executing_rpc = True
-                method(*args, **(kwargs or {}))
-            finally:
-                self._is_executing_rpc = False
+            original = method.__wrapped__
+            if self.identifier == STATIC_NET_ID:
+                original(*args, **(kwargs or {}))
+            else:
+                original(self, *args, **(kwargs or {}))
 
         # Se for Server, retransmite se necessário, respeitando o protocolo original
         if NetworkManager.instance.is_server:
@@ -399,7 +385,7 @@ class NetworkManager(Component):
             return
 
         target_id = STATIC_NET_ID
-        method_name = rpc_method.__name__
+        method_name = getattr(rpc_method, "_rpc_name", rpc_method.__name__)
         protocol = Protocol.TCP  # Default seguro
 
         # Tenta pegar a config do wrapper
@@ -408,6 +394,7 @@ class NetworkManager(Component):
 
         if hasattr(rpc_method, "__self__") and isinstance(rpc_method.__self__, NetworkComponent):
             target_id = rpc_method.__self__.identifier
+            method_name = rpc_method.__name__
 
         packet = (OP_RPC, target_id, method_name, args, kwargs)
         self.send_to_client(packet, client_id, protocol)
@@ -418,7 +405,8 @@ class NetworkManager(Component):
             op_code, target_id, payload, args, *extra = data
 
             if op_code == OP_RPC:
-                component = NetworkComponent._active_components.get(target_id)
+                component = (NetworkComponent.get_static_instance() if target_id == STATIC_NET_ID
+                             else NetworkComponent._active_components.get(target_id))
                 if component:
                     component.handle_incoming_rpc(payload, args, sender_id, extra[0] if extra else None)
 

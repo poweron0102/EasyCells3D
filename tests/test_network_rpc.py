@@ -102,6 +102,69 @@ class RpcTests(unittest.TestCase):
                         }[destination]
                         self.assertEqual(sorted(executed), expected)
 
+    def test_global_rpc_is_received_without_previous_local_call(self):
+        received = []
+
+        @Rpc(send_to=SendTo.SERVER, require_owner=False)
+        def announce(*, message):
+            received.append(message)
+
+        self.network.id = 0
+        self.network.is_server = True
+        name = announce.__module__ + '.' + announce.__qualname__
+        NetworkManager.process_packet((1, 0, name, (), {'message': 'hello'}), 1)
+        self.assertEqual(received, ['hello'])
+
+    def test_static_names_are_qualified_and_instance_methods_are_not_global(self):
+        received = []
+
+        class First(NetworkComponent):
+            @staticmethod
+            @Rpc(require_owner=False)
+            def announce():
+                received.append('first')
+
+            @Rpc()
+            def hit(self):
+                pass
+
+        class Second(NetworkComponent):
+            @Rpc(require_owner=False)
+            @staticmethod
+            def announce():
+                received.append('second')
+
+        self.assertNotIn(First.hit, NetworkComponent._static_rpcs.values())
+        for method in (First.announce, Second.announce):
+            method()
+        packets = list(self.network.sent)
+        self.network.is_server = True
+        self.network.id = 0
+        for _, packet in packets:
+            NetworkManager.process_packet(packet, 1)
+        self.assertEqual(received, ['first', 'second'])
+
+    def test_nested_rpc_keeps_its_own_destination(self):
+        received = []
+
+        class Player(NetworkComponent):
+            @Rpc(send_to=SendTo.SERVER)
+            def outer(self):
+                self.inner()
+
+            @Rpc(send_to=SendTo.CLIENTS)
+            def inner(self):
+                received.append(NetworkManager.instance.id)
+
+        player = Player(10, 1)
+        player.init()
+        player.outer()
+        self.network.is_server = True
+        self.network.id = 0
+        NetworkManager.process_packet(self.network.sent.pop()[1], 1)
+        self.assertEqual(received, [])
+        self.assertEqual([peer for peer, _ in self.network.sent], [1, 2])
+
 
 if __name__ == '__main__':
     unittest.main()
