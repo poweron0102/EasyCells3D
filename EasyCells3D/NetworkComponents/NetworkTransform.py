@@ -46,35 +46,33 @@ class NetworkTransform(NetworkComponent):
         self.interpolation_speed = interpolation_speed
         self.teleport_distance = teleport_distance
         self.heartbeat_interval = heartbeat_interval
-        self._last_sync_time = float("-inf")
+        self._heartbeat_elapsed = float("inf")
         self._target_position = None
+        self._sync_elapsed = float("inf")
 
-    def init(self):
-        super().init()
-        self.game.scheduler.create_task(self.sync(), key=self)
-
-    async def sync(self):
-        while True:
-            if self.owner == NetworkManager.instance.id:
-                data = self.serialize()
-                if (data[4:] != self.last_sent[4:] or
-                        self.game.run_time - self._last_sync_time >= self.heartbeat_interval):
-                    self.last_sent = data
-                    self._last_sync_time = self.game.run_time
-                    self.sync_transform(data)
-            await self.game.scheduler.sleep(self.sync_frequency)
+    def sync(self):
+        """Send changed state or a heartbeat; driven by the component loop."""
+        data = self.serialize()
+        if (data[4:] != self.last_sent[4:] or
+                self._heartbeat_elapsed >= self.heartbeat_interval):
+            self.last_sent = data
+            self._heartbeat_elapsed = 0.0
+            self.sync_transform(data)
 
     def loop(self):
+        if not self.enable:
+            return
         if self.owner == NetworkManager.instance.id:
             self._target_position = None
+            self._sync_elapsed += self.game.delta_time
+            self._heartbeat_elapsed += self.game.delta_time
+            if self._sync_elapsed >= self.sync_frequency:
+                self._sync_elapsed = 0.0
+                self.sync()
         elif self._target_position is not None:
             position = self.transform.position
             t = min(1.0, self.interpolation_speed * self.game.delta_time)
             self.transform.position = position + (self._target_position - position) * t
-
-    def on_destroy(self):
-        self.game.scheduler.cancel(self)
-        super().on_destroy()
 
     @Rpc(send_to=SendTo.NOT_ME, require_owner=True, protocol=Protocol.UDP)
     def sync_transform(self, data: bytes):
