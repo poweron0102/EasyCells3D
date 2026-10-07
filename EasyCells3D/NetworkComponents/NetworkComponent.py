@@ -194,10 +194,14 @@ class NetworkVariable[T]:
 
         NetworkVariable._active_variables[identifier] = self
 
-        if not NetworkManager.instance.is_server:
-            packet = (OP_VAR, self.var_id, VAR_GET, ())
-            # Força TCP para variáveis
-            NetworkManager.instance.send_to_server(packet, Protocol.TCP)
+        self._initial_requested = False
+        self._request_initial_value()
+
+    def _request_initial_value(self):
+        nm = NetworkManager.instance
+        if nm is not None and not nm.is_server and nm._tcp_connected and not self._initial_requested:
+            nm.send_to_server((OP_VAR, self.var_id, VAR_GET, ()), Protocol.TCP)
+            self._initial_requested = True
 
     @property
     def value(self) -> T:
@@ -205,9 +209,13 @@ class NetworkVariable[T]:
 
     @value.setter
     def value(self, new_value: T):
+        nm = NetworkManager.instance
+        if nm is None:
+            raise RuntimeError("NetworkManager is not initialized")
+        if not nm.is_server and self.require_owner and nm.id != self.owner:
+            raise PermissionError("Only the owner or server can write this NetworkVariable")
         self._value = new_value
         packet = (OP_VAR, self.var_id, VAR_SET, (new_value,))
-        nm = NetworkManager.instance
 
         if nm.is_server:
             nm.broadcast(packet, Protocol.TCP)
@@ -221,7 +229,8 @@ class NetworkVariable[T]:
             new_val = args[0]
             if nm.is_server:
                 if self.require_owner and sender_id != self.owner:
-                    return
+                    nm.send_to_client((OP_VAR, self.var_id, VAR_SET, (self._value,)), sender_id, Protocol.TCP)
+                    raise PermissionError("NetworkVariable write rejected: sender is not the owner")
 
                 self._value = new_val
                 packet = (OP_VAR, self.var_id, VAR_SET, (new_val,))
@@ -293,6 +302,8 @@ class NetworkManager(Component):
     def client_callback_tcp(self, client_id: int):
         self.id = client_id
         self._tcp_connected = True
+        for variable in list(NetworkVariable._active_variables.values()):
+            variable._request_initial_value()
         self._check_connection_complete(client_id)
 
     def client_callback_udp(self, client_id: int):
