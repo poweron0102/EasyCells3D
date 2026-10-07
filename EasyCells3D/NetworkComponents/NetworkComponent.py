@@ -53,7 +53,7 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
             if instance:
                 if not getattr(instance, "_is_executing_rpc", False):
                     # Passa o protocolo definido para o send_rpc
-                    instance.send_rpc(func.__name__, args[1:], send_to, protocol)
+                    instance.send_rpc(func.__name__, args[1:], send_to, protocol, kwargs)
 
                     if NetworkManager.instance.is_server and send_to in (SendTo.ALL, SendTo.SERVER):
                         return func(instance, *args[1:], **kwargs)
@@ -69,7 +69,7 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
                     NetworkComponent._static_rpcs[func.__name__] = func
 
                 if not getattr(static_comp, "_is_executing_rpc", False):
-                    static_comp.send_rpc(func.__name__, args, send_to, protocol)
+                    static_comp.send_rpc(func.__name__, args, send_to, protocol, kwargs)
 
                     if NetworkManager.instance.is_server and send_to in (SendTo.ALL, SendTo.SERVER):
                         return func(*args, **kwargs)
@@ -119,9 +119,9 @@ class NetworkComponent(Component):
             del NetworkComponent._active_components[self.identifier]
         self.on_destroy = lambda: None
 
-    def send_rpc(self, method_name: str, args: tuple, send_to: SendTo, protocol: Protocol):
+    def send_rpc(self, method_name: str, args: tuple, send_to: SendTo, protocol: Protocol, kwargs=None):
         """Encapsula e envia o pacote usando o protocolo especificado."""
-        packet = (OP_RPC, self.identifier, method_name, args)
+        packet = (OP_RPC, self.identifier, method_name, args, kwargs or {})
         nm = NetworkManager.instance
 
         print(f"Enviando RPC estática: {method_name} com args: {args}")
@@ -136,7 +136,7 @@ class NetworkComponent(Component):
         else:
             nm.send_to_server(packet, protocol)
 
-    def handle_incoming_rpc(self, method_name: str, args: tuple, sender_id: int):
+    def handle_incoming_rpc(self, method_name: str, args: tuple, sender_id: int, kwargs=None):
         """Recebe o pacote da rede, verifica segurança e executa."""
         method = None
         config = None
@@ -168,9 +168,9 @@ class NetworkComponent(Component):
         try:
             self._is_executing_rpc = True
             if self.identifier == STATIC_NET_ID:
-                method(*args)
+                method(*args, **(kwargs or {}))
             else:
-                method(*args)
+                method(*args, **(kwargs or {}))
         finally:
             self._is_executing_rpc = False
 
@@ -178,11 +178,11 @@ class NetworkComponent(Component):
         if NetworkManager.instance.is_server:
             # Usa o protocolo definido na config do RPC para retransmitir
             protocol = config.get("protocol", Protocol.TCP)
-            self._server_relay_rpc(method_name, args, config["send_to"], sender_id, protocol)
+            self._server_relay_rpc(method_name, args, config["send_to"], sender_id, protocol, kwargs)
 
-    def _server_relay_rpc(self, method_name: str, args: tuple, send_to: SendTo, sender_id: int, protocol: Protocol):
+    def _server_relay_rpc(self, method_name: str, args: tuple, send_to: SendTo, sender_id: int, protocol: Protocol, kwargs=None):
         """Lógica de retransmissão do servidor (Relay)."""
-        packet = (OP_RPC, self.identifier, method_name, args)
+        packet = (OP_RPC, self.identifier, method_name, args, kwargs or {})
         nm = NetworkManager.instance
 
         if send_to == SendTo.ALL or send_to == SendTo.CLIENTS:
@@ -397,7 +397,7 @@ class NetworkManager(Component):
             while data := transport.read():
                 self.process_packet(data, 0)
 
-    def call_rpc_on_client(self, client_id: int, rpc_method: Callable, *args):
+    def call_rpc_on_client(self, client_id: int, rpc_method: Callable, *args, **kwargs):
         """Invoca um RPC num cliente específico. Tenta detectar protocolo do método."""
         if not self.is_server:
             return
@@ -413,18 +413,18 @@ class NetworkManager(Component):
         if hasattr(rpc_method, "__self__") and isinstance(rpc_method.__self__, NetworkComponent):
             target_id = rpc_method.__self__.identifier
 
-        packet = (OP_RPC, target_id, method_name, args)
+        packet = (OP_RPC, target_id, method_name, args, kwargs)
         self.send_to_client(packet, client_id, protocol)
 
     @staticmethod
     def process_packet(data: tuple, sender_id: int):
         try:
-            op_code, target_id, payload, args = data
+            op_code, target_id, payload, args, *extra = data
 
             if op_code == OP_RPC:
                 component = NetworkComponent._active_components.get(target_id)
                 if component:
-                    component.handle_incoming_rpc(payload, args, sender_id)
+                    component.handle_incoming_rpc(payload, args, sender_id, extra[0] if extra else None)
 
             elif op_code == OP_VAR:
                 variable = NetworkVariable._active_variables.get(target_id)
