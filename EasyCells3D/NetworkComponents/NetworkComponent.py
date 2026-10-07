@@ -1,4 +1,5 @@
 import ipaddress
+from time import perf_counter
 from enum import Enum, auto
 from functools import wraps
 from typing import Callable
@@ -262,6 +263,9 @@ class NetworkManager(Component):
             disconnect_callback: Callable[[int], None] = None,
             max_clients: int = 64,
             max_udp_queue: int = 128,
+            max_packets_per_frame: int = 256,
+            max_packets_per_peer: int = 32,
+            max_frame_ms: float = 2.0,
     ):
         self.is_server = is_server
         self.ip = ip
@@ -275,6 +279,12 @@ class NetworkManager(Component):
         if connect_callback is not None:
             self.connect_callbacks.append(connect_callback)
 
+        if min(max_packets_per_frame, max_packets_per_peer, max_frame_ms) <= 0:
+            raise ValueError("Network processing budgets must be positive")
+        self.max_packets_per_frame = max_packets_per_frame
+        self.max_packets_per_peer = max_packets_per_peer
+        self.max_frame_ms = max_frame_ms
+        self._poll_cursor = 0
         self.max_clients = max_clients
         self.max_udp_queue = max_udp_queue
         self.enable_udp = enable_udp
@@ -399,16 +409,35 @@ class NetworkManager(Component):
                      if getattr(transport._impl, "error", "")), "")
 
     def _server_loop(self):
-        for transport in self.transports.values():
-            clients = transport.clients
-            for client_id in range(1, len(clients)):
-                while data := transport.read(client_id):
-                    self.process_packet(data, client_id)
+        peers = [(transport, cid) for transport in self.transports.values()
+                 for cid in range(1, len(transport.clients)) if transport.clients[cid] is not None]
+        self._poll_packets(peers)
 
     def _client_loop(self):
-        for transport in self.transports.values():
-            while data := transport.read():
-                self.process_packet(data, 0)
+        self._poll_packets([(transport, 0) for transport in self.transports.values()])
+
+    def _poll_packets(self, peers):
+        if not peers:
+            return
+        start = self._poll_cursor % len(peers)
+        self._poll_cursor = (start + 1) % len(peers)
+        peers = peers[start:] + peers[:start]
+        deadline = perf_counter() + self.max_frame_ms / 1000
+        remaining = self.max_packets_per_frame
+        counts, empty = {}, set()
+        for _ in range(self.max_packets_per_peer):
+            for index, (transport, cid) in enumerate(peers):
+                if index in empty or counts.get(cid, 0) >= self.max_packets_per_peer:
+                    continue
+                if remaining == 0 or perf_counter() >= deadline:
+                    return
+                data = transport.read(cid) if self.is_server else transport.read()
+                if data is None:
+                    empty.add(index)
+                    continue
+                remaining -= 1
+                counts[cid] = counts.get(cid, 0) + 1
+                self.process_packet(data, cid)
 
     def call_rpc_on_client(self, client_id: int, rpc_method: Callable, *args, **kwargs):
         """Invoca um RPC num cliente específico. Tenta detectar protocolo do método."""

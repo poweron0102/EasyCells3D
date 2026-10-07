@@ -2,6 +2,9 @@ import pickle
 import socket
 import unittest
 from unittest.mock import patch
+from collections import deque
+
+from EasyCells3D.NetworkComponents import NetworkManager, Protocol
 
 from EasyCells3D.NetworkUDP import NetworkServerUDP, _DatagramSession
 
@@ -82,6 +85,41 @@ class UdpLimitsTests(unittest.TestCase):
             server.receive_loop()
             self.assertEqual(list(server.msg_queues[1]), [3, 4])
             server.close()
+
+
+class FrameLimitsTests(unittest.TestCase):
+    def test_budget_is_shared_and_busy_peers_do_not_starve_others(self):
+        class Transport:
+            clients = [None, True, True]
+            def __init__(self):
+                self.queues = {1: deque(range(10)), 2: deque(range(10))}
+            def read(self, peer):
+                return self.queues[peer].popleft() if self.queues[peer] else None
+
+        manager = NetworkManager('127.0.0.1', 0, True, max_packets_per_frame=5,
+                                 max_packets_per_peer=3, max_frame_ms=100)
+        manager.transports = {Protocol.TCP: Transport(), Protocol.UDP: Transport()}
+        received = []
+        manager.process_packet = lambda packet, peer: received.append(peer)
+        manager._server_loop()
+        self.assertEqual(len(received), 5)
+        self.assertLessEqual(received.count(1), 3)
+        self.assertLessEqual(received.count(2), 3)
+        self.assertEqual(set(received), {1, 2})
+
+    def test_time_budget_stops_before_next_packet(self):
+        class Transport:
+            clients = [None, True]
+            def read(self, peer): return ('packet',)
+
+        manager = NetworkManager('127.0.0.1', 0, True, max_frame_ms=1)
+        manager.transports = {Protocol.TCP: Transport()}
+        received = []
+        manager.process_packet = lambda *args: received.append(args)
+        with patch('EasyCells3D.NetworkComponents.NetworkComponent.perf_counter',
+                   side_effect=[0, 0, .002]):
+            manager._server_loop()
+        self.assertEqual(len(received), 1)
 
 
 if __name__ == '__main__':
