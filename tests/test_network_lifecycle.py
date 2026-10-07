@@ -60,6 +60,13 @@ class LifecycleTests(unittest.TestCase):
             manager.on_destroy()
             tcp.return_value.close.assert_called_once()
 
+    def test_tcp_only_ephemeral_port_is_exposed_after_init(self):
+        manager = NetworkManager('127.0.0.1', 0, True, enable_udp=False)
+        self.game.CreateItem().AddComponent(manager)
+        self.addCleanup(manager.on_destroy)
+        self.game.flush_init()
+        self.assertGreater(manager.port, 0)
+
     def test_partial_startup_closes_tcp(self):
         with patch.object(network_module, 'TcpTransport') as tcp, patch.object(
                 network_module, 'UdpTransport', side_effect=OSError('port busy')):
