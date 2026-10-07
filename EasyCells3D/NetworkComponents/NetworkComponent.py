@@ -50,7 +50,6 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
     """
     Decorador que suporta métodos de instância (NetworkComponent),
     métodos estáticos (@staticmethod) e funções livres.
-    Agora suporta escolha de protocolo (TCP ou UDP).
     """
 
     def decorator(func: Callable):
@@ -73,7 +72,7 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
         wrapper._rpc_config = {
             "send_to": send_to,
             "require_owner": require_owner,
-            "protocol": protocol  # Salva a config do protocolo
+            "protocol": protocol  
         }
 
         wrapper._rpc_name = rpc_name
