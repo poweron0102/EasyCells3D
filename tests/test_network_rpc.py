@@ -68,6 +68,40 @@ class RpcTests(unittest.TestCase):
         NetworkManager.process_packet(self.network.sent.pop()[1], 0)
         self.assertEqual(player.received, 20)
 
+    def test_destinations_for_every_origin_and_owner(self):
+        for destination in SendTo:
+            for origin in (0, 1, 2):
+                for owner in (0, 1, 2):
+                    with self.subTest(destination=destination, origin=origin, owner=owner):
+                        executed = []
+
+                        class Player(NetworkComponent):
+                            @Rpc(send_to=destination, require_owner=False)
+                            def event(self):
+                                executed.append(NetworkManager.instance.id)
+
+                        peers = {i: MemoryNetwork(i) for i in (0, 1, 2)}
+                        objects = {i: Player(10, owner) for i in peers}
+                        NetworkManager.instance = peers[origin]
+                        objects[origin].event()
+                        if origin:
+                            packet = peers[origin].sent.pop()[1]
+                            NetworkManager.instance = peers[0]
+                            NetworkComponent._active_components[10] = objects[0]
+                            NetworkManager.process_packet(packet, origin)
+                        for recipient, packet in peers[0].sent:
+                            NetworkManager.instance = peers[recipient]
+                            NetworkComponent._active_components[10] = objects[recipient]
+                            NetworkManager.process_packet(packet, 0)
+                        expected = {
+                            SendTo.ALL: [0, 1, 2],
+                            SendTo.SERVER: [0],
+                            SendTo.CLIENTS: [1, 2],
+                            SendTo.OWNER: [owner],
+                            SendTo.NOT_ME: [i for i in peers if i != origin],
+                        }[destination]
+                        self.assertEqual(sorted(executed), expected)
+
 
 if __name__ == '__main__':
     unittest.main()

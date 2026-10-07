@@ -25,11 +25,21 @@ class Protocol(Enum):
 
 
 class SendTo(Enum):
-    ALL = 0  # Envia para todos (incluindo eu, se for Server)
+    ALL = 0  # Todos, incluindo o originador
     SERVER = 1  # Envia para o Server
-    CLIENTS = 2  # Server envia para todos os clientes
+    CLIENTS = 2  # Todos os clientes, nunca o servidor
     OWNER = 3  # Envia apenas para o dono do objeto
     NOT_ME = 4  # Envia para todos, exceto quem enviou
+
+
+def _rpc_recipient(send_to, receiver, sender, owner):
+    return {
+        SendTo.ALL: True,
+        SendTo.SERVER: receiver == 0,
+        SendTo.CLIENTS: receiver != 0,
+        SendTo.OWNER: receiver == owner,
+        SendTo.NOT_ME: receiver != sender,
+    }[send_to]
 
 
 def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Protocol = Protocol.TCP):
@@ -55,7 +65,7 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
                     # Passa o protocolo definido para o send_rpc
                     instance.send_rpc(func.__name__, args[1:], send_to, protocol, kwargs)
 
-                    if NetworkManager.instance.is_server and send_to in (SendTo.ALL, SendTo.SERVER):
+                    if NetworkManager.instance.is_server and _rpc_recipient(send_to, 0, 0, instance.owner):
                         return func(instance, *args[1:], **kwargs)
                     return None
 
@@ -71,7 +81,7 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
                 if not getattr(static_comp, "_is_executing_rpc", False):
                     static_comp.send_rpc(func.__name__, args, send_to, protocol, kwargs)
 
-                    if NetworkManager.instance.is_server and send_to in (SendTo.ALL, SendTo.SERVER):
+                    if NetworkManager.instance.is_server and _rpc_recipient(send_to, 0, 0, static_comp.owner):
                         return func(*args, **kwargs)
                     return None
 
@@ -124,15 +134,8 @@ class NetworkComponent(Component):
         packet = (OP_RPC, self.identifier, method_name, args, kwargs or {})
         nm = NetworkManager.instance
 
-        print(f"Enviando RPC estática: {method_name} com args: {args}")
-
         if nm.is_server:
-            if send_to == SendTo.ALL or send_to == SendTo.CLIENTS:
-                nm.broadcast(packet, protocol)
-            elif send_to == SendTo.NOT_ME:
-                nm.broadcast(packet, protocol)
-            elif send_to == SendTo.OWNER and self.owner != 0:
-                nm.send_to_client(packet, self.owner, protocol)
+            self._server_relay_rpc(method_name, args, send_to, 0, protocol, kwargs)
         else:
             nm.send_to_server(packet, protocol)
 
@@ -165,14 +168,13 @@ class NetworkComponent(Component):
                 print(f"Negado: RPC {method_name} no objeto {self.identifier} exige permissão de dono.")
                 return
 
-        try:
-            self._is_executing_rpc = True
-            if self.identifier == STATIC_NET_ID:
+        if not NetworkManager.instance.is_server or _rpc_recipient(
+                config["send_to"], 0, sender_id, self.owner):
+            try:
+                self._is_executing_rpc = True
                 method(*args, **(kwargs or {}))
-            else:
-                method(*args, **(kwargs or {}))
-        finally:
-            self._is_executing_rpc = False
+            finally:
+                self._is_executing_rpc = False
 
         # Se for Server, retransmite se necessário, respeitando o protocolo original
         if NetworkManager.instance.is_server:
@@ -185,16 +187,10 @@ class NetworkComponent(Component):
         packet = (OP_RPC, self.identifier, method_name, args, kwargs or {})
         nm = NetworkManager.instance
 
-        if send_to == SendTo.ALL or send_to == SendTo.CLIENTS:
-            nm.broadcast(packet, protocol)
-        elif send_to == SendTo.NOT_ME:
-            # Broadcast manual excluindo o sender
-            clients = nm.transports[protocol].clients
-            for cid in range(1, len(clients)):
-                if cid != sender_id:
-                    nm.send_to_client(packet, cid, protocol)
-        elif send_to == SendTo.OWNER and self.owner != sender_id:
-            nm.send_to_client(packet, self.owner, protocol)
+        for cid in range(1, len(nm.transports[protocol].clients)):
+            if _rpc_recipient(send_to, cid, sender_id, self.owner):
+                nm.send_to_client(packet, cid, protocol)
+
 
 
 class NetworkVariable[T]:
