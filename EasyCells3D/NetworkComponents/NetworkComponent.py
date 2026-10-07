@@ -261,7 +261,6 @@ class NetworkManager(Component):
             enable_udp: bool = True,
             disconnect_callback: Callable[[int], None] = None,
     ):
-        NetworkManager.instance = self
         self.is_server = is_server
         self.ip = ip
         self.port = port
@@ -274,27 +273,10 @@ class NetworkManager(Component):
         if connect_callback is not None:
             self.connect_callbacks.append(connect_callback)
 
-        if ip == "localhost":
-            ip_version = 4
-        else:
-            try:
-                ip_version = ipaddress.ip_address(ip).version
-            except ValueError:
-                ip_version = 4
-
-        # Inicializa AMBOS os protocolos atrás da interface Transport
+        self.enable_udp = enable_udp
         self._tcp_connected = False
         self._udp_connected = False
-        self.transports: dict[Protocol, Transport] = {
-            Protocol.TCP: TcpTransport(ip, port, ip_version, is_server,
-                self.server_callback_tcp if is_server else self.client_callback_tcp),
-        }
-        if enable_udp:
-            if is_server and port == 0:
-                self.port = self.transports[Protocol.TCP]._impl.server_socket.getsockname()[1]
-            self.transports[Protocol.UDP] = UdpTransport(ip, self.port, ip_version, is_server,
-                self.server_callback_udp if is_server else self.client_callback_udp,
-                self.transports[Protocol.TCP])
+        self.transports: dict[Protocol, Transport] = {}
 
     # --- Callbacks ---
     # Nota: Assumimos que o TCP é a conexão "Mestre" para definir o ID e disparar o callback do usuário
@@ -350,10 +332,43 @@ class NetworkManager(Component):
     # --- Loop ---
 
     def init(self):
-        if hasattr(self.item, "destroy_on_load"):
-            self.item.destroy_on_load = False
+        if self.transports:
+            return
+        if NetworkManager.instance is not None and NetworkManager.instance is not self:
+            raise RuntimeError("Only one initialized NetworkManager is supported")
+        NetworkManager.instance = self
+        try:
+            self._start_transports()
+        except Exception:
+            self.on_destroy()
+            raise
+        self.item.destroy_on_load = False
+
+    def _start_transports(self):
+        if self.ip == "localhost":
+            ip_version = 4
+        else:
+            try:
+                ip_version = ipaddress.ip_address(self.ip).version
+            except ValueError:
+                ip_version = 4
+
+        # Inicializa AMBOS os protocolos atrás da interface Transport
+        self.transports = {
+            Protocol.TCP: TcpTransport(self.ip, self.port, ip_version, self.is_server,
+                self.server_callback_tcp if self.is_server else self.client_callback_tcp),
+        }
+        if self.enable_udp:
+            if self.is_server and self.port == 0:
+                self.port = self.transports[Protocol.TCP]._impl.server_socket.getsockname()[1]
+            self.transports[Protocol.UDP] = UdpTransport(self.ip, self.port, ip_version, self.is_server,
+                self.server_callback_udp if self.is_server else self.client_callback_udp,
+                self.transports[Protocol.TCP])
+
 
     def loop(self):
+        if not self.transports:
+            return
         if self.is_server:
             self._server_loop()
         else:
@@ -434,5 +449,6 @@ class NetworkManager(Component):
     def on_destroy(self):
         for transport in self.transports.values():
             transport.close()
+        self.transports.clear()
         if NetworkManager.instance is self:
             NetworkManager.instance = None
