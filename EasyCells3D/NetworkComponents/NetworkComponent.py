@@ -1,4 +1,5 @@
 import ipaddress
+import pickle
 from time import perf_counter
 from enum import Enum, auto
 from functools import wraps
@@ -11,6 +12,8 @@ from EasyCells3D.Transport import Transport, TcpTransport, UdpTransport
 # --- Constantes de Protocolo ---
 OP_RPC = 1
 OP_VAR = 2
+OP_SPAWN = 3
+OP_DESPAWN = 4
 
 # Sub-operações para Variáveis
 VAR_SET = 1
@@ -293,7 +296,15 @@ class NetworkManager(Component):
             max_packets_per_frame: int = 256,
             max_packets_per_peer: int = 32,
             max_frame_ms: float = 2.0,
+            max_spawned_objects: int = 1024,
     ):
+        if max_spawned_objects < 1:
+            raise ValueError("max_spawned_objects must be positive")
+        self.max_spawned_objects = max_spawned_objects
+        self._prefabs = {}
+        self._spawned = {}
+        self._next_network_id = 1
+        self._closing = False
         self.is_server = is_server
         self.ip = ip
         self.port = port
@@ -318,6 +329,120 @@ class NetworkManager(Component):
         self._tcp_connected = False
         self._udp_connected = False
         self.transports: dict[Protocol, Transport] = {}
+
+    def register_prefab(self, name: str, factory: Callable):
+        """Register the same factory(game, *args, **kwargs) -> Item on every peer."""
+        if not isinstance(name, str) or not name or not callable(factory):
+            raise ValueError("A prefab needs a name and callable factory")
+        if name in self._prefabs and self._prefabs[name] is not factory:
+            raise ValueError(f"Prefab already registered: {name}")
+        self._prefabs[name] = factory
+
+    @property
+    def spawned(self):
+        return {identifier: obj.item for identifier, obj in self._spawned.items()}
+
+    def _allocate_id(self):
+        while (self._next_network_id in NetworkComponent._active_components or
+               self._next_network_id in NetworkVariable._active_variables or
+               self._next_network_id in self._spawned):
+            self._next_network_id += 1
+        identifier = self._next_network_id
+        self._next_network_id += 1
+        return identifier
+
+    def spawn(self, prefab: str, *args, owner: int = 0, **kwargs):
+        """Create and replicate a registered prefab. Only the server may spawn."""
+        if not self.is_server:
+            raise PermissionError("Only the server can spawn network objects")
+        if NetworkManager.instance is not self or not self.transports:
+            raise RuntimeError("NetworkManager must be initialized before spawn")
+        clients = self.transports[Protocol.TCP].clients
+        if type(owner) is not int or owner < 0 or (owner and (owner >= len(clients) or clients[owner] is None)):
+            raise ValueError("Owner must be the server or a connected peer")
+        identifier = self._allocate_id()
+        obj = self._create_spawn(identifier, prefab, owner, args, kwargs)
+        try:
+            packet = (OP_SPAWN, identifier, prefab, obj.snapshot())
+            from EasyCells3D.NetworkTCP import MAX_PACKET, _decode
+            encoded = pickle.dumps(packet, protocol=4)
+            if len(encoded) > MAX_PACKET:
+                raise ValueError("Network spawn packet too large")
+            decoded = _decode(encoded)  # Reject unsupported factory arguments/state before broadcasting.
+            obj.args, obj.kwargs = decoded[3][1:3]
+            self.broadcast(packet, Protocol.TCP)
+        except Exception:
+            self._spawned.pop(identifier, None)
+            obj.on_destroy()
+            obj.item.Destroy()
+            raise
+        return obj.item
+
+    def _create_spawn(self, identifier, prefab, owner, args, kwargs, identities=None, state=None):
+        from .NetworkObject import NetworkObject
+        from EasyCells3D.Components.Component import Item
+        if identifier in self._spawned:
+            return self._spawned[identifier]
+        if len(self._spawned) >= self.max_spawned_objects:
+            raise ValueError("Network object limit reached")
+        if type(identifier) is not int or identifier <= 0 or type(owner) is not int or owner < 0:
+            raise ValueError("Invalid network object identity")
+        factory = self._prefabs[prefab]
+        previous_items = set(self.game.item_list)
+        try:
+            item = factory(self.game, *args, **kwargs)
+            if not isinstance(item, Item) or item.game is not self.game or item.parent is not None or item in previous_items:
+                raise ValueError("Network prefab factory must return a root Item in this game")
+            items, components = NetworkObject.collect(item)
+            assigned = None if identities is None else {(tuple(p), kind): cid for p, kind, cid in identities}
+            if assigned is not None and (set(assigned) != set(components) or len(set(assigned.values())) != len(components)):
+                raise ValueError("Network prefab component layout does not match the server")
+            if assigned is not None and any(type(cid) is not int or cid <= 0 or cid == identifier for cid in assigned.values()):
+                raise ValueError("Invalid network component identity")
+            for key, component in components.items():
+                component._bind_identity(self._allocate_id() if assigned is None else assigned[key], owner)
+            obj = NetworkObject(self, identifier, prefab, args, kwargs, owner, items, components, state)
+            item.AddComponent(obj)
+            self._spawned[identifier] = obj
+            return obj
+        except Exception:
+            for created in set(self.game.item_list) - previous_items:
+                self._discard_spawn_item(created)
+            raise
+
+    def _discard_spawn_item(self, item):
+        pending, items = [item], set()
+        while pending:
+            current = pending.pop()
+            items.add(current)
+            pending.extend(current.children)
+        self.game.to_init[:] = [call for call in self.game.to_init
+                               if getattr(getattr(call, "__self__", None), "item", None) not in items]
+        for current in items:
+            for component in current._unique_components():
+                if isinstance(component, NetworkComponent):
+                    NetworkComponent.on_destroy(component)
+        item.Destroy()
+
+    def despawn(self, item_or_id):
+        """Destroy a replicated root Item (or its NetworkObject ID) on every peer."""
+        if not self.is_server:
+            raise PermissionError("Only the server can despawn network objects")
+        obj = self._spawned.get(item_or_id) if isinstance(item_or_id, int) else next(
+            (obj for obj in self._spawned.values() if obj.item is item_or_id), None)
+        if obj is not None:
+            obj.item.Destroy()
+
+    def _forget_spawn(self, obj):
+        tracked = self._spawned.get(obj.identifier) is obj
+        if tracked:
+            self._spawned.pop(obj.identifier)
+        self.game.to_init[:] = [call for call in self.game.to_init
+                               if getattr(getattr(call, "__self__", None), "item", None) not in obj._items.values()]
+        for component in obj._components.values():
+            NetworkComponent.on_destroy(component)
+        if tracked and self.is_server and not self._closing:
+            self.broadcast((OP_DESPAWN, obj.identifier, None, ()), Protocol.TCP)
 
     # --- Callbacks ---
     # Nota: Assumimos que o TCP é a conexão "Mestre" para definir o ID e disparar o callback do usuário
@@ -444,7 +569,7 @@ class NetworkManager(Component):
         self._poll_packets([(transport, 0) for transport in self.transports.values()])
 
     def _poll_packets(self, peers):
-        if not peers:
+        if not peers or any(not obj.ready for obj in self._spawned.values()):
             return
         start = self._poll_cursor % len(peers)
         self._poll_cursor = (start + 1) % len(peers)
@@ -465,6 +590,8 @@ class NetworkManager(Component):
                 remaining -= 1
                 counts[cid] = counts.get(cid, 0) + 1
                 self.process_packet(data, cid)
+                if any(not obj.ready for obj in self._spawned.values()):
+                    return
 
     def call_rpc_on_client(self, client_id: int, rpc_method: Callable, *args, **kwargs):
         """Invoca um RPC num cliente específico. Tenta detectar protocolo do método."""
@@ -491,7 +618,16 @@ class NetworkManager(Component):
         try:
             op_code, target_id, payload, args, *extra = data
 
-            if op_code == OP_RPC:
+            if op_code in (OP_SPAWN, OP_DESPAWN):
+                nm = NetworkManager.instance
+                if nm.is_server or sender_id != 0:
+                    raise PermissionError("Only the server can replicate spawn/despawn")
+                if op_code == OP_SPAWN:
+                    owner, spawn_args, kwargs, identities, state = args
+                    nm._create_spawn(target_id, payload, owner, spawn_args, kwargs, identities, state)
+                elif target_id in nm._spawned:
+                    nm._spawned[target_id].item.Destroy()
+            elif op_code == OP_RPC:
                 component = (NetworkComponent.get_static_instance() if target_id == STATIC_NET_ID
                              else NetworkComponent._active_components.get(target_id))
                 if component:
@@ -508,6 +644,9 @@ class NetworkManager(Component):
             print(f"Erro processando pacote: {e}")
 
     def on_destroy(self):
+        self._closing = True
+        for obj in list(self._spawned.values()):
+            self._forget_spawn(obj)
         for transport in self.transports.values():
             transport.close()
         self.transports.clear()
