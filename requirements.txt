@@ -1,0 +1,5 @@
+raylib==6.0.1.0
+numpy==2.5.3
+numba==0.68.0
+scipy==1.18.1
+pybullet==3.2.7
