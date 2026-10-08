@@ -491,21 +491,20 @@
             contendo o tamanho do payload em big-endian.
           </p>
           <p>
-            A leitura usa <code>recv(..., MSG_PEEK)</code> para <em>espiar</em> o buffer sem consumi-lo:
-            se a mensagem inteira ainda não chegou, retorna <code>None</code> e tenta de novo no próximo frame —
-            nunca trava o game loop.
+            A leitura mantém um buffer por peer e consome mensagens completas antes de ler novos bytes.
+            Se ainda faltam bytes, retorna <code>None</code>. O payload é limitado a 1 MiB.
           </p>
         </div>
         <div class="card udp">
           <h3><span class="tag udp">UDP</span> Datagrama rápido</h3>
           <p>
             UDP preserva fronteiras de pacote, então <strong>não há cabeçalho de tamanho</strong> — um
-            <code>recvfrom(65535)</code> entrega uma mensagem inteira. Em troca, não há garantia de entrega nem de ordem.
+            datagrama autenticado tem até 1.200 bytes, incluindo cabeçalho e MAC. Em troca, não há garantia de entrega nem de ordem.
           </p>
           <p>
             Como UDP não tem "conexão", o servidor roda uma <strong>thread de recepção</strong> que lê todos
-            os datagramas, identifica o cliente por <code>(ip, port)</code> e enfileira em um
-            <code>deque</code> por cliente. O cliente se registra enviando um <code>"HANDSHAKE"</code> inicial.
+            os datagramas, autentica ID, sequência, direção e payload, e enfileira em um
+            <code>deque</code> limitado por cliente. O handshake exige a chave da sessão TCP.
           </p>
         </div>
       </div>
@@ -525,34 +524,24 @@
       </div>
 
       <p class="sub">Implementação interna — leitura não-bloqueante (TCP)</p>
-<pre><code><span class="t-kw">def</span> <span class="t-fn">read</span>(self, client_id):
-    s = self.clients[client_id]
-    ready, _, _ = select.<span class="t-fn">select</span>([s], [], [], <span class="t-num">0</span>)   <span class="t-cm"># há algo para ler?</span>
-    <span class="t-kw">if not</span> ready:
-        <span class="t-kw">return</span> <span class="t-kw">None</span>
-    head = s.<span class="t-fn">recv</span>(SIZE_SIZE, socket.MSG_PEEK)        <span class="t-cm"># espia sem consumir</span>
-    <span class="t-kw">if</span> <span class="t-fn">len</span>(head) &lt; SIZE_SIZE:
-        <span class="t-kw">return</span> <span class="t-kw">None</span>                              <span class="t-cm"># cabeçalho incompleto</span>
-    size = <span class="t-fn">int</span>.<span class="t-fn">from_bytes</span>(head, <span class="t-str">"big"</span>)
-    <span class="t-kw">if</span> <span class="t-fn">len</span>(s.<span class="t-fn">recv</span>(size + SIZE_SIZE, socket.MSG_PEEK)) &lt; size + SIZE_SIZE:
-        <span class="t-kw">return</span> <span class="t-kw">None</span>                              <span class="t-cm"># payload ainda chegando</span>
-    s.<span class="t-fn">recv</span>(SIZE_SIZE)                              <span class="t-cm"># consome o header</span>
-    <span class="t-kw">return</span> pickle.<span class="t-fn">loads</span>(s.<span class="t-fn">recv</span>(size))           <span class="t-cm"># consome e devolve o objeto</span></code></pre>
+<p><code>_read(socket, buffer)</code> preserva cabeçalhos/payloads parciais e separa
+      mensagens agrupadas. O decodificador bloqueia resolução de classes e funções.</p>
 
       <div class="note">
         <span class="label">Convenção de IDs</span>
         A lista <code>clients</code> começa em <code>[None]</code>, então o índice <strong>0 nunca é um cliente</strong> —
         ele representa o servidor. Os clientes reais ocupam os índices 1, 2, 3… e cada um recebe seu próprio
-        ID assim que conecta (o servidor envia o número de volta no handshake).
+        ID e uma chave aleatória de sessão no handshake TCP. Os IDs não são reciclados durante a sessão.
       </div>
     </section>
 
     <!-- 4 -->
     <section id="manager">
+      <p><a href="network.md">Guia atualizado: spawn/despawn, exemplos, contratos, limites e migração.</a></p>
       <h2><span class="num">04</span> <code style="font-size:1.4rem">NetworkManager</code> <span style="font-size:1rem;color:var(--slate);font-family:var(--mono)">L2</span></h2>
       <p>
         É um <code>Component</code> do engine e um singleton (<code>NetworkManager.instance</code>). Ele é a
-        ponte entre o transporte e o modelo de replicação. Construir um já abre a rede:
+        ponte entre o transporte e o modelo de replicação. Os sockets são abertos em <code>Component.init()</code>, após anexá-lo ao Item:
       </p>
 <pre><code><span class="t-cm"># No servidor</span>
 item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</span>(ip=<span class="t-str">"0.0.0.0"</span>, port=<span class="t-num">25765</span>, is_server=<span class="t-kw">True</span>))
@@ -576,7 +565,7 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
             <tr><td><code>send_to_server(packet, protocol)</code></td><td>Cliente → servidor, no protocolo escolhido.</td></tr>
             <tr><td><code>send_to_client(packet, id, protocol)</code></td><td>Servidor → um cliente específico.</td></tr>
             <tr><td><code>broadcast(packet, protocol)</code></td><td>Servidor → todos os clientes.</td></tr>
-            <tr><td><code>call_rpc_on_client(id, metodo, *args)</code></td><td>Servidor invoca um RPC num cliente; detecta o protocolo pela config do método.</td></tr>
+            <tr><td><code>call_rpc_on_client(id, metodo, *args, **kwargs)</code></td><td>Servidor invoca um RPC num cliente; detecta o protocolo pela config do método.</td></tr>
           </tbody>
         </table>
       </div>
@@ -588,18 +577,12 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
 
       <p class="sub">O coração: <code>loop()</code> e <code>process_packet()</code></p>
       <p>
-        Como <code>Component</code>, o Manager tem seu <code>loop()</code> chamado todo frame. Ele drena
-        <strong>ambos</strong> os transportes (TCP e UDP) de todos os clientes e entrega cada pacote ao
+        Como <code>Component</code>, o Manager tem seu <code>loop()</code> chamado todo frame. Ele consulta
+        ambos os transportes com limites por frame, por peer e por tempo, entregando cada pacote ao
         <code>process_packet</code>, que faz o despacho final:
       </p>
-<pre><code><span class="t-kw">def</span> <span class="t-fn">process_packet</span>(data, sender_id):
-    op_code, target_id, payload, args = data
-    <span class="t-kw">if</span> op_code == OP_RPC:
-        comp = NetworkComponent._active_components.<span class="t-fn">get</span>(target_id)
-        <span class="t-kw">if</span> comp: comp.<span class="t-fn">handle_incoming_rpc</span>(payload, args, sender_id)
-    <span class="t-kw">elif</span> op_code == OP_VAR:
-        var = NetworkVariable._active_variables.<span class="t-fn">get</span>(target_id)
-        <span class="t-kw">if</span> var: var.<span class="t-fn">handle_network_update</span>(payload, args, sender_id)</code></pre>
+<p>O despacho trata RPCs (incluindo argumentos nomeados), variáveis, spawn e despawn.
+      Novos objetos aguardam o init normal antes dos próximos pacotes.</p>
       <p>
         Repare no padrão de registro: objetos de rede se cadastram em dicionários estáticos
         (<code>_active_components</code>, <code>_active_variables</code>) indexados por <code>identifier</code>.
@@ -611,15 +594,15 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
     <section id="pacote">
       <h2><span class="num">05</span> Formato do pacote</h2>
       <p>
-        Acima do transporte, tudo trafega como uma <strong>tupla de 4 elementos</strong>. É o "envelope"
-        comum a RPCs e variáveis:
+        Acima do transporte, variáveis e spawn/despawn usam quatro campos. RPCs acrescentam
+        um quinto campo <code>kwargs</code>, preservando argumentos nomeados:
       </p>
       <div class="panel">
-        <p class="panel-title">( op_code , target_id , payload , args )</p>
+        <p class="panel-title">( op_code , target_id , payload , args [, kwargs] )</p>
         <div class="api-wrap" style="border:none;margin:0">
           <table>
             <tbody>
-              <tr><td><code>op_code</code></td><td><code>OP_RPC&nbsp;=&nbsp;1</code> ou <code>OP_VAR&nbsp;=&nbsp;2</code> — diz ao receptor qual subsistema trata o pacote.</td></tr>
+              <tr><td><code>op_code</code></td><td><code>OP_RPC=1</code>, <code>OP_VAR=2</code>, <code>OP_SPAWN=3</code> ou <code>OP_DESPAWN=4</code> — diz ao receptor qual subsistema trata o pacote.</td></tr>
               <tr><td><code>target_id</code></td><td>O <code>identifier</code> do objeto destino. <code>0</code> (<code>STATIC_NET_ID</code>) = RPC estático/global.</td></tr>
               <tr><td><code>payload</code></td><td>Nome do método (RPC) ou a sub-operação <code>VAR_SET</code>/<code>VAR_GET</code> (variável).</td></tr>
               <tr><td><code>args</code></td><td>Tupla de argumentos, serializada junto pelo <code>pickle</code>.</td></tr>
@@ -637,11 +620,11 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
     <section id="rpc">
       <h2><span class="num">06</span> Sistema de RPC <span style="font-size:1rem;color:var(--slate);font-family:var(--mono)">L3</span></h2>
       <p>
-        Um <strong>Remote Procedure Call</strong> é um método que, quando chamado localmente, na verdade
-        executa nas <em>outras</em> máquinas. A mágica está no decorator <code>@Rpc</code>, que envolve o
-        método: na primeira chamada ele <em>não</em> roda o corpo — ele empacota a chamada e a envia pela rede.
-        Quando o pacote chega do outro lado, o módulo marca <code>_is_executing_rpc = True</code> e aí sim
-        executa o corpo de verdade.
+        Um <strong>Remote Procedure Call</strong> é um método que executa nos peers definidos pelo destino.
+        O decorator <code>@Rpc</code> envolve o método e envia a chamada pela rede; o servidor também
+        executa o corpo localmente quando faz parte dos destinatários.
+        Quando o pacote chega ao destinatário autorizado, o módulo executa a função original.
+        Chamadas aninhadas mantêm seus próprios destinos.
       </p>
 <pre><code><span class="t-kw">class</span> <span class="t-fn">Player</span>(NetworkComponent):
 
@@ -650,7 +633,7 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
         <span class="t-fn">spawn_projetil</span>(direcao)        <span class="t-cm"># roda em todos os peers</span>
 
 <span class="t-cm"># Em qualquer lugar do gameplay:</span>
-player.<span class="t-fn">disparar</span>(Vec3(<span class="t-num">0</span>, <span class="t-num">0</span>, -<span class="t-num">1</span>))      <span class="t-cm"># vira um pacote na rede, não roda local*</span></code></pre>
+player.<span class="t-fn">disparar</span>((<span class="t-num">0</span>, <span class="t-num">0</span>, -<span class="t-num">1</span>))      <span class="t-cm"># vira um pacote na rede, não roda local*</span></code></pre>
 
       <p class="sub">Os três parâmetros</p>
       <div class="grid-2">
@@ -701,16 +684,16 @@ player.<span class="t-fn">disparar</span>(Vec3(<span class="t-num">0</span>, <sp
 
       <div class="note">
         <span class="label">* exceção importante</span>
-        Se você é o <strong>servidor</strong> e o <code>send_to</code> é <code>ALL</code>, o corpo do método
-        roda imediatamente na sua máquina <em>além</em> de ser enviado — afinal o servidor também participa do
-        "todos". Em qualquer outro caso, a chamada local apenas envia o pacote.
+        O servidor executa localmente para <code>ALL</code>, <code>SERVER</code> e <code>OWNER</code> quando é o dono.
+        <code>CLIENTS</code> executa somente nos clientes; <code>NOT_ME</code> exclui o originador.
+        Clientes executam quando recebem a chamada autorizada de volta, se forem destinatários.
       </div>
 
       <p class="sub">RPCs estáticos</p>
       <p>
         Funções livres e <code>@staticmethod</code> decoradas com <code>@Rpc</code> também funcionam: elas usam
         a instância especial de <code>identifier = 0</code> (<code>STATIC_NET_ID</code>) e são registradas em
-        <code>NetworkComponent._static_rpcs</code> pelo nome. Servem para eventos globais que não pertencem a
+        <code>NetworkComponent._static_rpcs</code> por <code>module.qualname</code>, sem misturar métodos de instância. Servem para eventos globais que não pertencem a
         nenhum objeto específico (ex.: "iniciar partida").
       </p>
     </section>
@@ -730,12 +713,13 @@ vida.value -= <span class="t-num">10</span>     <span class="t-cm"># o setter en
       <p>
         Variáveis usam <strong>sempre TCP</strong> — perder uma atualização de estado é inaceitável.
         A lógica de autoridade é a mesma dos RPCs: com <code>require_owner=True</code>, o servidor descarta
-        um <code>VAR_SET</code> vindo de quem não é dono, e então faz relay do valor aceito para os demais.
+        um <code>VAR_SET</code> vindo de quem não é dono e devolve o valor válido. Localmente, a escrita indevida
+        lança <code>PermissionError</code> antes da alteração. O servidor mantém autoridade de escrita.
       </p>
       <p class="sub">Late-join: a sub-operação VAR_GET</p>
       <p>
         Quando um cliente cria uma <code>NetworkVariable</code> que já existe no servidor, ele não conhece o
-        valor atual. Por isso, no construtor, o cliente dispara um <code>VAR_GET</code>; o servidor responde com
+        valor atual. Depois de conectado, o cliente dispara um <code>VAR_GET</code>; o servidor responde com
         um <code>VAR_SET</code> direcionado só a ele, contendo o valor corrente. Assim quem entra no meio da
         partida recebe o estado certo.
       </p>
@@ -759,25 +743,15 @@ vida.value -= <span class="t-num">10</span>     <span class="t-cm"># o setter en
 
       <p class="sub">Como funciona por dentro</p>
       <ul>
-        <li><strong>Só o dono envia.</strong> No <code>init</code> ele agenda uma task no <code>scheduler</code>; o loop de sync só roda se <code>self.owner == NetworkManager.instance.id</code>.</li>
+        <li><strong>Só o dono envia.</strong> O envio usa o <code>loop</code> do componente, respeita <code>enable</code> e continua após troca de cena se o Item persistir; envia quando <code>self.owner == NetworkManager.instance.id</code>.</li>
         <li><strong>Serialização binária compacta.</strong> Em vez de pickle genérico, usa <code>struct.pack</code> para empacotar só os <code>float</code>s dos eixos habilitados — bem mais enxuto.</li>
-        <li><strong>Supressão de redundância.</strong> A cada tick compara o pacote novo com <code>last_sent</code>; se nada mudou (ignorando o contador), não envia. Objeto parado não gera tráfego.</li>
+        <li><strong>Supressão de redundância.</strong> A cada tick compara o pacote novo com <code>last_sent</code>; se nada mudou (ignorando o contador), não envia. Mesmo parado, envia um heartbeat periódico.</li>
         <li><strong>Transmite por UDP.</strong> O método de aplicação é <code>@Rpc(send_to=NOT_ME, protocol=UDP)</code> — perdeu um frame de posição? O próximo corrige. Velocidade &gt; confiabilidade aqui.</li>
-        <li><strong>Contador de sequência.</strong> Cada pacote leva um inteiro <code>cont</code>. Na recepção, se <code>cont &lt; self.cont</code> o pacote é <strong>descartado</strong> — é assim que se rejeita um datagrama UDP que chegou fora de ordem.</li>
+        <li><strong>Contador de sequência.</strong> Cada pacote leva um inteiro <code>cont</code>. Na recepção, se <code>cont &lt;= self.cont</code> o pacote é <strong>descartado</strong> — é assim que se rejeita um datagrama UDP que chegou fora de ordem.</li>
       </ul>
 
-<pre><code><span class="t-kw">async def</span> <span class="t-fn">sync</span>(self):
-    <span class="t-kw">if</span> self.owner == NetworkManager.instance.id:   <span class="t-cm"># só o dono emite</span>
-        <span class="t-kw">while</span> <span class="t-kw">True</span>:
-            data = self.<span class="t-fn">serialize</span>()
-            <span class="t-kw">if</span> data[<span class="t-num">4</span>:] != self.last_sent[<span class="t-num">4</span>:]:   <span class="t-cm"># mudou? (ignora o contador)</span>
-                self.last_sent = data
-                self.<span class="t-fn">sync_transform</span>(data)         <span class="t-cm"># RPC UDP → demais peers</span>
-            <span class="t-kw">await</span> self.game.scheduler.<span class="t-fn">sleep</span>(self.sync_frequency)
-
-<span class="t-dec">@Rpc</span>(send_to=SendTo.NOT_ME, require_owner=<span class="t-kw">True</span>, protocol=Protocol.UDP)
-<span class="t-kw">def</span> <span class="t-fn">sync_transform</span>(self, data):
-    self.<span class="t-fn">deserialize</span>(data)                     <span class="t-cm"># aplica nos outros (com checagem de cont)</span></code></pre>
+<p><code>sync_frequency</code> é o intervalo entre tentativas de envio, em segundos.
+      O conteúdo binário é transportado dentro de um RPC UDP autenticado.</p>
       <p>
         Esse componente demonstra a regra geral do módulo: <strong>estado discreto e crítico → TCP +
         NetworkVariable</strong>; <strong>estado contínuo e tolerante a perda → UDP + RPC com contador
@@ -790,26 +764,25 @@ vida.value -= <span class="t-num">10</span>     <span class="t-cm"># o setter en
       <h2><span class="num">09</span> Notas &amp; armadilhas</h2>
       <div class="note warn">
         <span class="label">Segurança · pickle</span>
-        Toda a (de)serialização usa <code>pickle</code>, que executa código arbitrário ao desempacotar dados
-        maliciosos. É prático para um jogo entre amigos, mas <strong>nunca exponha o servidor à internet
-        aberta</strong> sem trocar por um formato seguro. Trate todo peer como confiável.
+        O unpickler bloqueia classes e funções, mas os valores recebidos ainda exigem validação.
+        UDP usa HMAC e rejeita repetição. Isso não cifra o tráfego: a entrega da chave TCP não usa TLS.
+        Veja o <a href="network.md">guia de uso</a> para limites e alcance das proteções.
       </div>
       <div class="note warn">
         <span class="label">Pareamento de IDs TCP/UDP</span>
-        TCP e UDP são conexões independentes. O módulo <em>assume</em> que o ID atribuído no UDP coincide com o
-        do TCP porque a ordem de conexão tende a ser a mesma — mas isso é frágil sob concorrência. O TCP é
-        sempre a fonte de verdade do <code>id</code> do cliente.
+        O TCP atribui a identidade e a chave da sessão; o UDP exige uma prova autenticada dessa chave.
+        Apresentar somente um ID existente não permite registrar um endereço UDP.
       </div>
       <div class="note">
         <span class="label">Tamanho do datagrama</span>
-        UDP entrega no máximo ~64&nbsp;KB por pacote e sem fragmentação própria. Pacotes muito grandes (um
-        <code>NetworkTransform</code> com muitos eixos cabe folgado, mas dados arbitrários não) devem ir por TCP.
+        O limite operacional é 1.200 bytes por datagrama completo. Dados maiores devem usar TCP.
+        As filas UDP são limitadas e descartam os dados mais antigos quando cheias.
       </div>
       <div class="note">
         <span class="label">Threads</span>
         Aceitação de clientes (TCP) e recepção (UDP) rodam em threads <em>daemon</em> — encerram junto com o
         programa. O processamento dos pacotes, porém, acontece no <code>loop()</code> do game thread, então o
-        seu código de jogo nunca corre risco de concorrência ao reagir a um RPC.
+        polling do Manager também entrega callbacks de conexão na thread principal.
       </div>
     </section>
 

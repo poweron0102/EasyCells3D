@@ -615,14 +615,15 @@ game.scheduler.cancel(task)
 Suporte a servidores e clientes **TCP** e **UDP** (serialização via `pickle`).
 
 ```python
-from EasyCells3D.NetworkTCP import NetworkServer  # ou NetworkUDP
+from EasyCells3D.NetworkTCP import NetworkServerTCP
 
-server = NetworkServer(ip="0.0.0.0", port=5000, ip_version=4)
+server = NetworkServerTCP(ip="0.0.0.0", port=5000, ip_version=4)
 server.broadcast({"tipo": "spawn", "x": 100, "y": 50})
-dados = server.read(client_id=0)
+dados = server.read(client_id=1)
 ```
 
-Documentação detalhada em [docs/network.html](docs/network.html).
+Uso atualizado, spawn/despawn, RPCs e limites em [docs/network.md](docs/network.md).
+Visão geral em [docs/network.html](docs/network.html).
 
 ---
 
