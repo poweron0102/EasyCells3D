@@ -330,7 +330,7 @@ class NetworkClientUDP(_ConnectionEvents):
             return None  # No data available yet
 
         try:
-            data, _ = self.server_socket.recvfrom(65535)
+            data, _ = self.server_socket.recvfrom(MAX_DATAGRAM + 1)
             message = self._session.decode(data)
             if isinstance(message, int):
                 return None  # A repeated handshake acknowledgement.
@@ -344,7 +344,7 @@ class NetworkClientUDP(_ConnectionEvents):
 
     def block_read(self) -> Any:
         # Blocking read
-        data, _ = self.server_socket.recvfrom(65535)
+        data, _ = self.server_socket.recvfrom(MAX_DATAGRAM + 1)
         return self._session.decode(data)
 
     def close(self):
@@ -360,8 +360,11 @@ if __name__ == "__main__":
 
     is_server = bool(int(input("Server(1) or Client(0): ")))
 
+    from EasyCells3D.NetworkTCP import NetworkServerTCP, NetworkClientTCP
+
     if is_server:
-        server = NetworkServerUDP(IP, PORT)
+        tcp = NetworkServerTCP(IP, PORT)
+        server = NetworkServerUDP(IP, PORT, peer_token=lambda cid: tcp.peer_tokens.get(cid))
 
         print("Waiting for clients...")
         while len(server.clients) == 1:
@@ -377,7 +380,8 @@ if __name__ == "__main__":
             time.sleep(0.1)
 
     else:
-        client = NetworkClientUDP(IP, PORT)
+        tcp = NetworkClientTCP(IP, PORT)
+        client = NetworkClientUDP(IP, PORT, peer_id=lambda: tcp.id, peer_token=lambda: tcp.session_token)
 
         # Wait for connection to complete
         while client.id is None:
