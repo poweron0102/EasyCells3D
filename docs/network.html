@@ -594,7 +594,7 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
     <section id="pacote">
       <h2><span class="num">05</span> Formato do pacote</h2>
       <p>
-        Acima do transporte, variáveis e spawn/despawn usam quatro campos. RPCs acrescentam
+        Acima do transporte, variáveis e spawn/despawn usam quatro campos. RPCs síncronos acrescentam
         um quinto campo <code>kwargs</code>, preservando argumentos nomeados:
       </p>
       <div class="panel">
@@ -614,6 +614,9 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
         Essa uniformidade é o que permite ao <code>process_packet</code> ser tão curto: ele lê o
         <code>op_code</code>, encontra o objeto pelo <code>target_id</code> e delega o resto.
       </p>
+      <p>RPCs assíncronos usam <code>OP_ASYNC_RPC=5</code> com
+        <code>(op, call_id, tipo, payload)</code>. O servidor correlaciona requisições e respostas
+        pelo remetente autenticado e pelos destinatários daquela chamada.</p>
     </section>
 
     <!-- 6 -->
@@ -635,7 +638,7 @@ item.<span class="t-fn">AddComponent</span>(<span class="t-fn">NetworkManager</s
 <span class="t-cm"># Em qualquer lugar do gameplay:</span>
 player.<span class="t-fn">disparar</span>((<span class="t-num">0</span>, <span class="t-num">0</span>, -<span class="t-num">1</span>))      <span class="t-cm"># vira um pacote na rede, não roda local*</span></code></pre>
 
-      <p class="sub">Os três parâmetros</p>
+      <p class="sub">Parâmetros do decorador</p>
       <div class="grid-2">
         <div class="card">
           <h3><code>send_to</code></h3>
@@ -649,11 +652,16 @@ player.<span class="t-fn">disparar</span>((<span class="t-num">0</span>, <span c
           <h3><code>protocol</code></h3>
           <p><code>Protocol.TCP</code> (padrão, confiável) ou <code>Protocol.UDP</code> (rápido, para eventos frequentes e descartáveis como sincronizar transform).</p>
         </div>
+        <div class="card">
+          <h3><code>timeout</code></h3>
+          <p>Prazo em segundos para RPCs <code>async def</code>, que exigem TCP. Quando omitido,
+            usa <code>NetworkManager(..., rpc_timeout=10.0)</code>.</p>
+        </div>
       </div>
 
       <p class="sub">Servidor como relay</p>
       <p>
-        Num modelo autoritativo os clientes não falam entre si. Quando o servidor recebe um RPC, ele
+        Num modelo autoritativo os clientes não falam entre si. Quando o servidor recebe um RPC síncrono, ele
         primeiro <strong>valida a autoridade</strong>, executa localmente se preciso, e então
         <strong>retransmite</strong> (relay) para os outros clientes respeitando o <code>send_to</code> e o
         <code>protocol</code> originais. Veja o caminho de um RPC <code>NOT_ME</code> disparado por um cliente:
@@ -688,6 +696,41 @@ player.<span class="t-fn">disparar</span>((<span class="t-num">0</span>, <span c
         <code>CLIENTS</code> executa somente nos clientes; <code>NOT_ME</code> exclui o originador.
         Clientes executam quando recebem a chamada autorizada de volta, se forem destinatários.
       </div>
+
+      <p class="sub">RPCs assíncronos com retorno</p>
+      <p>Uma função <code>async def</code> decorada envia a chamada imediatamente e retorna um
+        <code>RpcCall</code>. Faça <code>await</code> dentro de uma tarefa do Scheduler para receber
+        o resultado remoto. Os handlers também rodam no Scheduler e podem aguardar outros RPCs.</p>
+<pre><code>class Player(NetworkComponent):
+    @Rpc(send_to=SendTo.OWNER, require_owner=False, timeout=5.0)
+    async def consultar_pontos(self):
+        await self.game.scheduler.next_frame()
+        return self.pontos
+
+async def consultar(player):
+    pontos = await player.consultar_pontos()
+    print(pontos)
+
+game.scheduler.create_task(consultar(player))</code></pre>
+      <p>O fluxo pode ser cliente A → servidor → cliente B → servidor → cliente A.
+        O servidor encaminha a chamada antes de executar seu próprio handler. A execução é
+        concorrente no Scheduler, na thread principal; não há um loop asyncio adicional.</p>
+      <ul>
+        <li><code>SERVER</code>, <code>OWNER</code> e <code>call_rpc_on_client</code> retornam um valor.
+          <code>ALL</code>, <code>CLIENTS</code> e <code>NOT_ME</code> aguardam todos e retornam
+          <code>{peer_id: resultado}</code>, inclusive <code>{}</code> quando não há destinatários.</li>
+        <li>O servidor fixa os destinatários conectados ao aceitar a chamada. Permissões continuam
+          valendo: chamar o OWNER de outro cliente exige <code>require_owner=False</code>.</li>
+        <li>Erros chegam como <code>RpcRemoteError</code>. Em coletivos, <code>RpcGroupError</code>
+          preserva <code>results</code> e <code>errors</code> por participante.</li>
+        <li>O timeout usa tempo real desde a chamada e depende da atualização do loop para ser detectado.
+          Não há repetição automática. Cancelar a espera ou exceder o prazo não desfaz efeitos remotos.</li>
+        <li>Trocar de cena cancela chamadas e execuções locais, inclusive globais e estáticas.
+          Destruir um componente cancela seus handlers. Erros não observados são registrados quando
+          o handle é descartado.</li>
+      </ul>
+      <p>Veja o <a href="network.md#rpcs-assíncronos-e-scheduler">contrato completo e tratamento de erros</a>.
+        Os RPCs síncronos mantêm seu comportamento atual. Todos os peers devem usar a mesma versão.</p>
 
       <p class="sub">RPCs estáticos</p>
       <p>

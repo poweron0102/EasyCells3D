@@ -101,7 +101,8 @@ se desejado. Para persistência entre cenas, marque a raiz com destroy_on_load=F
 Clientes enviam ao servidor para autorização e retransmissão. Sua execução local, quando aplicável,
 acontece ao receber a resposta; não há execução preditiva automática. O servidor executa localmente
 quando pertence ao destino. require_owner=True valida o remetente no servidor; o servidor mantém autoridade.
-RPCs não retornam resultados remotos.
+RPCs síncronos (`def`) mantêm o comportamento de envio sem resposta remota. RPCs `async def`
+retornam um `RpcCall` aguardável pelo Scheduler, conforme descrito abaixo.
 
 Argumentos posicionais e nomeados são preservados, inclusive keyword-only. RPCs aninhados obedecem
 seus próprios destinos. call_rpc_on_client(client_id, method, *args, **kwargs) é um envio explícito
@@ -110,6 +111,97 @@ feito pelo servidor a um cliente e prevalece sobre o destino normal do decorador
 Funções livres e staticmethod usam module.qualname, evitando colisões entre classes/módulos. Ambas as
 ordens de Rpc e staticmethod são aceitas. Métodos de instância não entram no registro global. Para uma
 função global aceitar chamadas de clientes, use require_owner=False e valide suas regras no servidor.
+
+### RPCs assíncronos e Scheduler
+
+~~~python
+from EasyCells3D.NetworkComponents import NetworkComponent, Rpc, SendTo, RpcRemoteError
+
+class Player(NetworkComponent):
+    @Rpc(send_to=SendTo.OWNER, require_owner=False, timeout=5.0)
+    async def consultar_pontos(self, *, multiplicador=1):
+        await self.game.scheduler.next_frame()
+        return self.pontos * multiplicador
+
+async def consultar(game, player):
+    try:
+        pontos = await player.consultar_pontos(multiplicador=2)
+        print(pontos)
+    except RpcRemoteError as erro:
+        print(erro.peer_id, erro.remote_type, erro.message)
+
+# No código de gameplay, com o manager conectado e o componente inicializado:
+game.scheduler.create_task(consultar(game, player))
+~~~
+
+`player.consultar_pontos(...)` envia imediatamente e devolve um `RpcCall`: você pode guardá-lo,
+aguardá-lo depois ou enviar sem esperar. Diferentemente de uma coroutine Python comum, não é
+preciso passá-lo a `create_task` para iniciar o envio. Use `create_task` para a coroutine que faz
+o `await`. `RpcCall` pertence ao Scheduler daquele jogo; não é um `asyncio.Future`.
+
+O percurso entre clientes é cliente A → servidor → cliente B → servidor → cliente A. O servidor
+valida a chamada e encaminha as respostas; apenas os destinatários executam o corpo. Os handlers
+rodam no Scheduler da thread principal, incluindo a execução local no servidor, e podem aguardar
+outros RPCs, tarefas, `sleep` ou `next_frame`. Uma tarefa suspensa não impede outros RPCs de começar.
+O servidor encaminha a chamada antes de executar seu próprio handler, quando também for destinatário.
+
+| Chamada | Resultado do `await` |
+|---|---|
+| `SERVER`, `OWNER` | Valor retornado pelo único destinatário, inclusive `None` |
+| `ALL`, `CLIENTS`, `NOT_ME` | Dicionário `{peer_id: resultado}`, após todos terminarem |
+| `manager.call_rpc_on_client(id, metodo, ...)` | Valor do cliente escolhido; somente o servidor pode usar essa API |
+
+O servidor tem `peer_id=0`. Destinos coletivos sempre retornam dicionário, mesmo com um único
+participante; sem destinatários retornam `{}`. Um destino único indisponível gera `RpcConnectionError`.
+Os destinatários são fixados quando o servidor aceita a chamada. Entradas posteriores e mudanças
+de owner não alteram essa chamada; desconexões dos destinatários pendentes geram falhas.
+`require_owner=True` continua como padrão: para A chamar o `OWNER` de um objeto de B, o RPC deve
+permitir chamadas de outros clientes com `require_owner=False`. O servidor mantém autoridade.
+
+- RPCs assíncronos exigem **TCP**; `@Rpc(protocol=Protocol.UDP)` em uma função `async def` gera `ValueError`.
+  Use a mesma versão do código nos peers. O protocolo assíncrono não é entendido por versões anteriores.
+- Configure o prazo padrão com `NetworkManager(..., rpc_timeout=10.0)`, ou sobrescreva por função com
+  `@Rpc(..., timeout=5.0)`. Valores precisam ser positivos e finitos. O prazo começa na chamada,
+  inclui ida e volta e usa relógio monotônico, independente de `game.run_time`. A entrega de resultados
+  e a detecção de timeout dependem da atualização do loop; não ocorrem enquanto a engine estiver parada.
+- Retornos precisam ser dados aceitos pelo codec e caber no limite de pacote TCP. Instâncias de
+  componentes/classes personalizadas e retornos grandes demais viram erros, sem enviar objetos executáveis.
+- Uma exceção remota vira `RpcRemoteError`, com `peer_id`, `remote_type` e `message`; a classe original
+  não é reconstruída. Falta de permissão, componente ou método também produz erro explícito.
+  `RpcTimeoutError` e `RpcConnectionError` são subclasses de `RpcRemoteError` e também de
+  `TimeoutError` e `ConnectionError`, respectivamente.
+- Um coletivo com falhas aguarda os demais destinatários ou o prazo e lança `RpcGroupError`.
+  `erro.results` preserva os retornos recebidos e `erro.errors` contém `{peer_id: erro}`. Antes de
+  receber a confirmação dos destinatários, falhas de autorização/conexão/timeout são erros diretos.
+- `chamada.done` indica conclusão; `chamada.result()` obtém o retorno ou lança a exceção. Falhas
+  que não foram observadas por `await`/`result()` são registradas pelo logger
+  `EasyCells3D.NetworkComponents.AsyncRpc` quando o handle é descartado.
+- `chamada.cancel()` cancela apenas a espera local, com `SchedulerTaskCancelled` (de
+  `EasyCells3D.scheduler`). Cancelar uma tarefa que aguarda a chamada remove aquela tarefa da espera;
+  outros consumidores do mesmo handle podem continuar. Nenhuma dessas ações interrompe o handler remoto.
+- Timeout não desfaz efeitos remotos e não repete a chamada. Respostas tardias ou duplicadas são ignoradas.
+  A execução remota pode continuar após o prazo ou a desconexão de quem chamou.
+- A troca de cena (`scheduler.clear()`) cancela chamadas locais pendentes e execuções locais, incluindo
+  funções globais/estáticas. Destruir um NetworkComponent cancela seus handlers locais; sobrescritas de
+  `on_destroy` devem chamar `super().on_destroy()`. O chamador recebe a falha se a conexão ainda existir.
+  Encerrar o manager também encerra suas chamadas e execuções. O transporte persistente não transforma
+  os RPCs em tarefas persistentes entre cenas.
+
+~~~python
+from EasyCells3D.NetworkComponents import RpcGroupError
+
+async def consultar_todos(player):
+    try:
+        resultados = await player.consultar_todos()  # RPC declarado com SendTo.ALL
+    except RpcGroupError as erro:
+        print("Resultados recebidos:", erro.results)
+        print("Falhas por participante:", erro.errors)
+~~~
+
+Internamente, `OP_ASYNC_RPC=5` usa `(op, call_id, tipo, payload)` para requisição, aceitação,
+execução, resposta e rejeição. O servidor correlaciona cada resposta com o remetente e a chamada
+pendente, sem confiar em um ID de participante declarado pelo cliente. Resultados coletivos são
+encaminhados individualmente, permitindo preservar respostas parciais até o timeout.
 
 ## Variáveis, transform e callbacks
 

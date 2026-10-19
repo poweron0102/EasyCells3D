@@ -7,6 +7,7 @@ import unittest
 
 from EasyCells3D.NetworkComponents import (
     NetworkComponent, NetworkManager, NetworkObject, NetworkTransform, NetworkVariable, Rpc, SendTo,
+    RpcRemoteError,
 )
 from test_network_lifecycle import DummyGame
 
@@ -25,6 +26,25 @@ class Avatar(NetworkComponent):
     def announce(self, *, message):
         self.message = message
 
+    @Rpc(send_to=SendTo.OWNER, require_owner=False)
+    async def owner_result(self, *, value):
+        await self.game.scheduler.sleep(.02)
+        return NetworkManager.instance.id, value * 2
+
+    @Rpc(send_to=SendTo.ALL, require_owner=False)
+    async def collect(self, *, value):
+        await self.game.scheduler.next_frame()
+        return NetworkManager.instance.id, value
+
+    @Rpc(send_to=SendTo.SERVER, require_owner=False)
+    async def nested(self, *, value):
+        return await self.owner_result(value=value)
+
+    @Rpc(send_to=SendTo.SERVER, require_owner=False)
+    async def fail(self):
+        await self.game.scheduler.next_frame()
+        raise ValueError('expected remote failure')
+
 
 def avatar_factory(game, *, x=0):
     item = game.CreateItem()
@@ -37,6 +57,7 @@ def avatar_factory(game, *, x=0):
 def peer_worker(connection, is_server, port):
     game = DummyGame()
     callback_threads = []
+    async_results = {}
     manager = NetworkManager('127.0.0.1', port, is_server,
                              connect_callback=lambda _: callback_threads.append(threading.get_ident()))
     manager.register_prefab('avatar', avatar_factory)
@@ -84,7 +105,22 @@ def peer_worker(connection, is_server, port):
                                                 message=avatar.message, x=item.transform.x))
                         result = dict(id=manager.id, tcp=manager._tcp_connected, udp=manager._udp_connected,
                                       error=manager.error, objects=objects,
+                                      async_results=async_results,
                                       callbacks_on_main=all(t == threading.get_ident() for t in callback_threads))
+                    elif command == 'async_rpc':
+                        avatar = next(iter(manager.spawned.values())).GetComponent(Avatar)
+                        method = getattr(avatar, args['method'])
+                        call = (manager.call_rpc_on_client(args['client'], method, **args['kwargs'])
+                                if 'client' in args else method(**args['kwargs']))
+
+                        async def collect_result(call=call, key=args['key']):
+                            try:
+                                async_results[key] = {'value': await call}
+                            except RpcRemoteError as error:
+                                async_results[key] = {'error': error.remote_type, 'peer': error.peer_id}
+
+                        game.scheduler.create_task(collect_result())
+                        result = True
                     else:
                         raise ValueError(command)
                     connection.send({'result': result})
@@ -173,6 +209,34 @@ class NetworkIntegrationTests(unittest.TestCase):
         self.assertEqual(self.call(server, 'despawn', identifier=identifier), {'result': True})
         self.state_when(owner, lambda s: not s['objects'])
         self.state_when(late, lambda s: not s['objects'])
+
+    def test_async_rpc_client_relay_collective_nested_targeted_and_error(self):
+        server, port = self.start_peer(True)
+        first, _ = self.start_peer(False, port)
+        self.state_when(first, lambda state: state['tcp'])
+        second, _ = self.start_peer(False, port)
+        self.state_when(second, lambda state: state['tcp'])
+        self.assertIn('result', self.call(server, 'spawn', owner=2, x=0))
+        for peer in (first, second):
+            self.state_when(peer, lambda state: len(state['objects']) == 1 and
+                            state['objects'][0]['initial_health'] == 100)
+        requests = [('owner', 'owner_result', {'value': 12}),
+                    ('all', 'collect', {'value': 13}),
+                    ('nested', 'nested', {'value': 14}),
+                    ('error', 'fail', {})]
+        for key, method, kwargs in requests:
+            self.assertEqual(self.call(first, 'async_rpc', key=key, method=method, kwargs=kwargs), {'result': True})
+        state = self.state_when(first, lambda state: len(state['async_results']) == 4)
+        self.assertEqual(state['async_results'], {
+            'owner': {'value': (2, 24)},
+            'all': {'value': {0: (0, 13), 1: (1, 13), 2: (2, 13)}},
+            'nested': {'value': (2, 28)},
+            'error': {'error': 'ValueError', 'peer': 0},
+        })
+        self.assertEqual(self.call(server, 'async_rpc', key='targeted', method='collect',
+                                   kwargs={'value': 15}, client=1), {'result': True})
+        state = self.state_when(server, lambda state: 'targeted' in state['async_results'])
+        self.assertEqual(state['async_results']['targeted'], {'value': (1, 15)})
 
 
 if __name__ == '__main__':

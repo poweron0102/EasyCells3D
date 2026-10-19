@@ -29,7 +29,7 @@ class _NextFrameRequest:
 
 @dataclass
 class _TaskWaitRequest:
-    task: 'SchedulerTask'
+    task: 'SchedulerTask | SchedulerFuture'
 
     def __await__(self):
         result = yield self
@@ -40,7 +40,69 @@ class SchedulerTaskCancelled(Exception):
     pass
 
 
-class SchedulerTask:
+class SchedulerFuture:
+    """A result completed by an external producer on the game's thread."""
+
+    def __init__(self, scheduler: 'Scheduler'):
+        self.scheduler = scheduler
+        self.done = False
+        self.cancelled = False
+        self.result_value = None
+        self.exception = None
+        self._waiters = []
+        self._done_callbacks = []
+        scheduler._futures.add(self)
+
+    def __await__(self):
+        result = yield _TaskWaitRequest(self)
+        return result
+
+    def result(self):
+        if not self.done:
+            raise RuntimeError("Scheduler result has not finished yet")
+        if self.exception is not None:
+            raise self.exception
+        return self.result_value
+
+    def set_result(self, value):
+        if not self.done:
+            self.result_value = value
+            self._finish()
+
+    def set_exception(self, exception):
+        if not self.done:
+            self.exception = exception
+            self._finish()
+
+    def cancel(self):
+        if not self.done:
+            self.cancelled = True
+            self.set_exception(SchedulerTaskCancelled("Scheduler future was cancelled"))
+
+    def add_done_callback(self, callback):
+        if self.done:
+            callback(self)
+        else:
+            self._done_callbacks.append(callback)
+
+    def _finish(self):
+        self.done = True
+        self.scheduler._futures.discard(self)
+        self._notify_done()
+
+    def _notify_done(self):
+        for waiter in self._waiters:
+            self.scheduler._resume_waiter_from_task(waiter, self)
+        self._waiters.clear()
+        callbacks, self._done_callbacks = self._done_callbacks, []
+        for callback in callbacks:
+            try:
+                callback(self)
+            except Exception:
+                traceback.print_exc()
+
+
+class SchedulerTask(SchedulerFuture):
     def __init__(
             self,
             scheduler: 'Scheduler',
@@ -60,6 +122,8 @@ class SchedulerTask:
         self._waiters: list[SchedulerTask] = []
         self._send_value: Any = None
         self._throw_exception: BaseException | None = None
+        self._waiting_on: SchedulerFuture | None = None
+        self._done_callbacks = []
 
     def __await__(self):
         result = yield _TaskWaitRequest(self)
@@ -79,10 +143,14 @@ class SchedulerTask:
         if self.done:
             return
         self.done = True
+        if self.coroutine.cr_running:
+            # A handler can destroy its own component or change scenes. Close it
+            # after send()/throw() returns, rather than reentering the coroutine.
+            return
         try:
             self.coroutine.close()
-        except RuntimeError:
-            pass
+        except Exception:
+            traceback.print_exc()
 
     def result(self):
         if not self.done:
@@ -102,6 +170,7 @@ class Scheduler:
         self._pending_tasks: deque[SchedulerTask] = deque()
         self._lock = threading.RLock()
         self._frame = 0
+        self._futures: set[SchedulerFuture] = set()
 
         Scheduler.instance = self
 
@@ -126,7 +195,10 @@ class Scheduler:
                     send_value = task._send_value
                     task._send_value = None
                     request = task.coroutine.send(send_value)
-                self._schedule_next_step(task, request)
+                if task.done:
+                    task.coroutine.close()
+                else:
+                    self._schedule_next_step(task, request)
             except StopIteration as e:
                 task.result_value = e.value
                 self._remove_task(task)
@@ -165,9 +237,9 @@ class Scheduler:
 
         return task
 
-    def cancel(self, task_or_key: SchedulerTask | Any):
+    def cancel(self, task_or_key: SchedulerFuture | Any):
         with self._lock:
-            if isinstance(task_or_key, SchedulerTask):
+            if isinstance(task_or_key, SchedulerFuture):
                 task = task_or_key
             else:
                 task = self._tasks_by_key.get(task_or_key)
@@ -176,8 +248,9 @@ class Scheduler:
                 return
 
             task.cancel()
-            if task.key is not None and self._tasks_by_key.get(task.key) is task:
-                self._tasks_by_key.pop(task.key, None)
+            key = getattr(task, "key", None)
+            if key is not None and self._tasks_by_key.get(key) is task:
+                self._tasks_by_key.pop(key, None)
 
     def sleep(self, seconds: float) -> _SleepRequest:
         return _SleepRequest(max(seconds, 0))
@@ -187,10 +260,12 @@ class Scheduler:
 
     def clear(self):
         with self._lock:
-            for task in self._tasks:
+            for task in list(self._tasks):
                 task.cancel()
-            for task in self._pending_tasks:
+            for task in list(self._pending_tasks):
                 task.cancel()
+            for future in list(self._futures):
+                future.cancel()
             self._tasks.clear()
             self._tasks_by_key.clear()
             self._pending_tasks.clear()
@@ -241,17 +316,22 @@ class Scheduler:
 
         if isinstance(request, _TaskWaitRequest):
             awaited = request.task
+            if awaited.scheduler is not self:
+                raise ValueError("Cannot await a result from another Scheduler")
+            if awaited is task:
+                raise ValueError("A task cannot await itself")
             if awaited.done:
                 self._resume_waiter_from_task(task, awaited)
             else:
                 awaited._waiters.append(task)
+                task._waiting_on = awaited
                 task.ready_time = float("inf")
                 task.ready_frame = self._frame
             return
 
         raise TypeError(
             "Scheduler tasks can only await scheduler.sleep(...) "
-            "or scheduler.next_frame(), or another SchedulerTask"
+            "or scheduler.next_frame(), or a SchedulerTask/SchedulerFuture"
         )
 
     def _remove_task(self, task: SchedulerTask):
@@ -262,15 +342,18 @@ class Scheduler:
         self._complete_task(task)
 
     def _complete_task(self, task: SchedulerTask):
+        if task._waiting_on is not None:
+            awaited, task._waiting_on = task._waiting_on, None
+            if task in awaited._waiters:
+                awaited._waiters.remove(task)
         task.close()
-        for waiter in list(task._waiters):
-            self._resume_waiter_from_task(waiter, task)
-        task._waiters.clear()
+        task._notify_done()
 
-    def _resume_waiter_from_task(self, waiter: SchedulerTask, awaited: SchedulerTask):
+    def _resume_waiter_from_task(self, waiter: SchedulerTask, awaited: SchedulerFuture):
         if waiter.done or waiter.cancelled:
             return
 
+        waiter._waiting_on = None
         if awaited.exception is not None:
             waiter._throw_exception = awaited.exception
         else:

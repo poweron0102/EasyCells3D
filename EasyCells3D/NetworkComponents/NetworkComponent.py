@@ -1,4 +1,5 @@
 import ipaddress
+import inspect
 import pickle
 from time import perf_counter
 from enum import Enum, auto
@@ -8,6 +9,7 @@ from weakref import WeakValueDictionary
 
 from EasyCells3D.Components.Component import Component
 from EasyCells3D.Transport import Transport, TcpTransport, UdpTransport
+from .AsyncRpc import OP_ASYNC_RPC, _AsyncRpc, _timeout
 
 # --- Constantes de Protocolo ---
 OP_RPC = 1
@@ -46,7 +48,8 @@ def _rpc_recipient(send_to, receiver, sender, owner):
     }[send_to]
 
 
-def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Protocol = Protocol.TCP):
+def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Protocol = Protocol.TCP,
+        *, timeout: float | None = None):
     """
     Decorador que suporta métodos de instância (NetworkComponent),
     métodos estáticos (@staticmethod) e funções livres.
@@ -56,6 +59,13 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
         is_static = isinstance(func, staticmethod)
         if is_static:
             func = func.__func__
+        is_async = inspect.iscoroutinefunction(func)
+        if is_async and protocol != Protocol.TCP:
+            raise ValueError("Async RPCs require Protocol.TCP")
+        if timeout is not None:
+            _timeout(timeout)
+            if not is_async:
+                raise ValueError("RPC timeout is only supported for async functions")
         rpc_name = f"{func.__module__}.{func.__qualname__}"
 
         @wraps(func)
@@ -64,6 +74,12 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
             component = instance if instance is not None else NetworkComponent.get_static_instance()
             method_name = func.__name__ if instance is not None else rpc_name
             call_args = args[1:] if instance is not None else args
+            if is_async:
+                manager = NetworkManager.instance
+                if manager is None:
+                    raise RuntimeError("An initialized NetworkManager is required for async RPCs")
+                return manager._async_rpc.start(component.identifier, method_name, call_args, kwargs,
+                                                wrapper._rpc_config)
             component.send_rpc(method_name, call_args, send_to, protocol, kwargs)
             if NetworkManager.instance.is_server and _rpc_recipient(send_to, 0, 0, component.owner):
                 return func(*args, **kwargs)
@@ -72,7 +88,9 @@ def Rpc(send_to: SendTo = SendTo.ALL, require_owner: bool = True, protocol: Prot
         wrapper._rpc_config = {
             "send_to": send_to,
             "require_owner": require_owner,
-            "protocol": protocol  
+            "protocol": protocol,
+            "async": is_async,
+            "timeout": timeout,
         }
 
         wrapper._rpc_name = rpc_name
@@ -129,6 +147,9 @@ class NetworkComponent(Component):
         return cls._static_instance
 
     def on_destroy(self):
+        manager = NetworkManager.instance
+        if manager is not None and hasattr(manager, "_async_rpc"):
+            manager._async_rpc.cancel_component(self)
         if NetworkComponent._active_components.get(self.identifier) is self:
             del NetworkComponent._active_components[self.identifier]
         for variable in vars(self).values():
@@ -168,6 +189,8 @@ class NetworkComponent(Component):
 
         if method is None or config is None:
             return
+        if config.get("async"):
+            raise ValueError("Async RPCs require the request/reply protocol")
 
         if NetworkManager.instance.is_server and config["require_owner"]:
             if sender_id != self.owner:
@@ -296,6 +319,7 @@ class NetworkManager(Component):
             max_packets_per_peer: int = 32,
             max_frame_ms: float = 2.0,
             max_spawned_objects: int = 1024,
+            rpc_timeout: float = 10.0,
     ):
         if max_spawned_objects < 1:
             raise ValueError("max_spawned_objects must be positive")
@@ -329,6 +353,8 @@ class NetworkManager(Component):
         self._tcp_connected = False
         self._udp_connected = False
         self.transports: dict[Protocol, Transport] = {}
+        self.rpc_timeout = _timeout(rpc_timeout)
+        self._async_rpc = _AsyncRpc(self)
 
     def register_prefab(self, name: str, factory: Callable):
         """Register the same factory(game, *args, **kwargs) -> Item on every peer."""
@@ -536,6 +562,7 @@ class NetworkManager(Component):
 
 
     def loop(self):
+        self._async_rpc.update()
         if not self.transports:
             return
         if self.is_server:
@@ -594,6 +621,11 @@ class NetworkManager(Component):
                 if remaining == 0 or perf_counter() >= deadline:
                     return
                 data = transport.read(cid) if self.is_server else transport.read()
+                if (isinstance(data, (tuple, list)) and data and data[0] == OP_ASYNC_RPC and
+                        transport is not self.transports.get(Protocol.TCP)):
+                    remaining -= 1
+                    counts[cid] = counts.get(cid, 0) + 1
+                    continue  # Do not process or defer request/reply RPCs received over UDP.
                 if any(not obj.ready for obj in self._spawned.values()):
                     self._deferred_packet = (data, cid) if data is not None else None
                     return
@@ -623,12 +655,18 @@ class NetworkManager(Component):
             target_id = rpc_method.__self__.identifier
             method_name = rpc_method.__name__
 
+        config = getattr(rpc_method, "_rpc_config", {})
+        if config.get("async"):
+            return self._async_rpc.start(target_id, method_name, args, kwargs, config, client_id)
         packet = (OP_RPC, target_id, method_name, args, kwargs)
         self.send_to_client(packet, client_id, protocol)
 
     @staticmethod
     def process_packet(data: tuple, sender_id: int):
         try:
+            if isinstance(data, (tuple, list)) and data and data[0] == OP_ASYNC_RPC:
+                NetworkManager.instance._async_rpc.process(data, sender_id)
+                return
             op_code, target_id, payload, args, *extra = data
 
             if op_code in (OP_SPAWN, OP_DESPAWN):
@@ -657,6 +695,7 @@ class NetworkManager(Component):
             print(f"Erro processando pacote: {e}")
 
     def on_destroy(self):
+        self._async_rpc.close()
         self._closing = True
         for obj in list(self._spawned.values()):
             self._forget_spawn(obj)
